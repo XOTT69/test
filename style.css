@@ -1,0 +1,206 @@
+body {
+  font-family: system-ui, sans-serif;
+  background: #f8f9fa;
+  margin: 0;
+  color: #222;
+}
+
+#main-nav {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  background: #e9eef5;
+  padding: 1rem 0.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.nav-btn {
+  background: #fff;
+  border: 1px solid #b6c1d2;
+  border-radius: 8px;
+  padding: 0.5rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.3s, color 0.3s, border-color 0.3s;
+}
+
+.nav-btn.active,
+.nav-btn:focus {
+  background: #3085e0;
+  color: #fff;
+  border-color: #3085e0;
+  outline: none;
+}
+
+main, .main-section {
+  margin: 2rem auto;
+  max-width: 600px;
+  background: #fff;
+  border-radius: 1rem;
+  padding: 2rem 1.5rem 1.5rem;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+form {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+input[type="text"],
+select {
+  flex: 1 1 200px;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #b6c1d2;
+  border-radius: 6px;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+  transition: border-color 0.3s;
+}
+
+input[type="text"]:focus,
+select:focus {
+  border-color: #3085e0;
+  outline: none;
+}
+
+button {
+  background: #3085e0;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.7rem 1.2rem;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 1rem;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+button:hover {
+  background: #246bb2;
+}
+
+#add-book {
+  background: #2ecc71;
+}
+
+#add-book:hover {
+  background: #27ae60;
+}
+
+#clear-library {
+  margin: 1rem 0;
+  background: #f65a4b;
+  border: none;
+  color: #fff;
+  border-radius: 6px;
+  padding: 0.7rem 1.3rem;
+  font-size: 1rem;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background 0.3s;
+}
+
+#clear-library:hover {
+  background: #b71c1c;
+}
+
+#books-list li,
+#recommendations-list li {
+  background: #f1f6fa;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  padding: 0.8rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+#books-list button {
+  background: #e74c3c;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.9rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.3s;
+  flex-shrink: 0;
+}
+
+#books-list button:hover {
+  background: #c0392b;
+}
+section {
+  margin-bottom: 2rem;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 2rem;
+  transform: translateX(-50%);
+  background: #323e70ee;
+  color: #fff;
+  padding: 1rem 2rem;
+  border-radius: 6px;
+  font-size: 1rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(50, 62, 112, 0.6);
+}
+
+#toast.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (max-width: 700px) {
+  .main-section,
+  main {
+    margin: 1rem 0.1rem;
+    padding: 1.2rem 0.3rem;
+  }
+  #main-nav {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  form {
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  button,
+  #books-list button {
+    width: 100%;
+  }
+  input[type="text"],
+  select {
+    width: 100%;
+    flex: unset;
+  }
+  #books-list li,
+  #recommendations-list li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+

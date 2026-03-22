@@ -1,1 +1,58 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="theme-color" content="#ffffff"/>
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="icon" href="images/icon-128.png"/>
+  <title>Моя бібліотека</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <nav id="main-nav" aria-label="Головне меню">
+    <button class="nav-btn" data-section="library" aria-controls="section-library" aria-selected="true" role="tab" tabindex="0">Моя бібліотека</button>
+    <button class="nav-btn" data-section="search" aria-controls="section-search" aria-selected="false" role="tab" tabindex="-1">Пошук</button>
+    <button class="nav-btn" data-section="recommend" aria-controls="section-recommend" aria-selected="false" role="tab" tabindex="-1">Рекомендації</button>
+    <button class="nav-btn" data-section="external" aria-controls="section-external" aria-selected="false" role="tab" tabindex="-1">Інтернет-книги</button>
+  </nav>
+  <main>
+    <section id="section-library" class="main-section" role="tabpanel" tabindex="0">
+      <h1>Моя бібліотека</h1>
+      <form id="add-book-form" aria-label="Форма додавання книги">
+        <input type="text" id="title" placeholder="Назва книги" required aria-required="true" aria-label="Назва книги" />
+        <input type="text" id="author" placeholder="Автор" required aria-required="true" aria-label="Автор книги" />
+        <input type="text" id="genre" placeholder="Жанр" required aria-required="true" aria-label="Жанр книги" />
+        <button type="submit">Додати</button>
+      </form>
+      <div>
+        <label for="genre-filter">Фільтр за жанром:</label>
+        <select id="genre-filter" aria-label="Фільтр за жанром">
+          <option value="">Усі жанри</option>
+        </select>
+      </div>
+      <button id="clear-library" aria-label="Очистити бібліотеку">Очистити бібліотеку</button>
+      <ul id="books-list" aria-live="polite" aria-label="Список книг"></ul>
+    </section>
 
+    <section id="section-search" class="main-section" role="tabpanel" tabindex="0" hidden>
+      <h1>Пошук у бібліотеці</h1>
+      <input type="text" id="search-input" placeholder="Знайти книгу чи автора" aria-label="Пошук книги чи автора" />
+      <ul id="search-results-list" aria-live="polite" aria-label="Результати пошуку"></ul>
+    </section>
+
+    <section id="section-recommend" class="main-section" role="tabpanel" tabindex="0" hidden>
+      <h1>Рекомендації</h1>
+      <ul id="recommendations-list" aria-live="polite" aria-label="Рекомендації за жанрами"></ul>
+    </section>
+
+    <section id="section-external" class="main-section" role="tabpanel" tabindex="0" hidden>
+      <h1>Інтернет-книги</h1>
+      <input type="text" id="external-search-input" placeholder="Пошук у каталозі OpenLibrary" aria-label="Пошук книг в OpenLibrary" />
+      <ul id="external-books-list" aria-live="polite" aria-label="Результати пошуку інтернет-книг"></ul>
+    </section>
+  </main>
+  <div id="toast" role="alert" aria-live="assertive" aria-atomic="true" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>

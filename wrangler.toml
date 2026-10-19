@@ -6,7 +6,7 @@ crons = ["0 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "oselya-bot-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "16c0e74c-7a79-4ffc-b8d7-e40018564f44"
 migrations_dir = "migrations"
 [vars]
 TIMEZONE = "Europe/Kyiv"

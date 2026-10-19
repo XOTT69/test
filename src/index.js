@@ -245,12 +245,21 @@ async function medicineMenu(e,u){
  const low=rows.filter(m=>medicineState(m).scarce).length;
  const list=rows.map(m=>"• "+medicineState(m).icon+" "+esc(m.name)+" ("+medQuantity(m)+") — "+medicineState(m).expiry);
  const buttons=rows.map(m=>[key(medicineState(m).icon+" "+m.name.slice(0,35),"med:"+m.id)]);
- buttons.push([key("➕ Додати препарат","med:new")],[key("📦 Архів аптечки","med:archive")],...toHome);
+ buttons.push([key("➕ Додати препарат","med:new"),key("🔎 Знайти препарат","med:search")],[key("📦 Архів аптечки","med:archive")],...toHome);
  return send(e,u,"<b>🧰 Домашня аптечка</b>\n\n🔴 Прострочених позицій: "+expired+
  "\n🟠 Придатність ≤30 днів: "+soon+"\n📉 Малий або нульовий запас: "+low+
  "\n\n"+(list.length?list.join("\n"):"Аптечка порожня. Додай перший препарат.")+
  (rows.length===40?"\nПоказано перші 40 позицій.":"")+
  "\n\n⚠️ Дані довідкові: перевіряй оригінальну упаковку. Не використовуй прострочені ліки. Кожне пакування з іншим терміном додавай окремо. Список бачать усі запрошені члени сім’ї.",buttons);
+}
+async function medicineSearch(e,u,phrase){
+ const input=String(phrase||"").trim().toLocaleLowerCase("uk-UA");
+ if(input.length<2)return send(e,u,"Напиши щонайменше 2 символи для пошуку.");
+ const items=await all(e,"SELECT * FROM medicine_items WHERE uid=? AND archived=0 ORDER BY name LIMIT 500",u);
+ const results=items.filter(x=>x.name.toLocaleLowerCase("uk-UA").includes(input)).slice(0,20);
+ return send(e,u,"🔎 <b>Пошук в аптечці</b>\nЗапит: "+esc(phrase)+"\n\n"+
+  (results.length?results.map(x=>medicineState(x).icon+" "+esc(x.name)+" — "+medQuantity(x)).join("\n"):"Збігів немає."),
+  [...results.map(x=>[key("📦 "+x.name.slice(0,32),"med:"+x.id)]),[key("🧰 Аптечка","menu:medicines")]]);
 }
 async function medicineArchive(e,u){
  const rows=await all(e,"SELECT id,name FROM medicine_items WHERE uid=? AND archived=1 ORDER BY id DESC LIMIT 30",u);
@@ -264,7 +273,7 @@ async function medicineDetail(e,u,id){
  const events=await all(e,"SELECT delta,kind,created_at FROM medicine_events WHERE uid=? AND medicine_id=? ORDER BY id DESC LIMIT 5",u,id);
  const history=events.map(x=>"• "+x.created_at.slice(0,10)+" · "+(x.delta>0?"+":"")+x.delta+" "+esc(m.unit)+" ("+(x.kind==="used"?"використано":x.kind==="stock"?"додано":x.kind==="discarded"?"списано":"коригування")+")").join("\n");
  const buttons=[[key("➖ Списати 1 "+m.unit.slice(0,12),"meduse:"+id),key("➕ Поповнити","medstock:"+id)],
- [key("✏️ Редагувати","mededit:"+id),key("🗑 До архіву","medarchive:"+id)],
+ [key("✏️ Редагувати","mededit:"+id),key("🗑 До архіву","medarchive:"+id)],[key("♻️ Списати непридатний залишок","meddiscard:"+id)],
  [key("⬅️ Аптечка","menu:medicines")]];
  return send(e,u,"<b>"+state.icon+" "+esc(m.name)+"</b>\n"+
  (m.form?"Форма/маркування: "+esc(m.form)+"\n":"")+
@@ -427,6 +436,7 @@ async function recordReplacement(e,u,item,replacedOn,cost=0){
 }
 async function wizard(e,u,text,s){
  const p=JSON.parse(s.json);
+ if(s.kind==="medsearch"){await cancel(e,u);return medicineSearch(e,u,text);}
  if(s.kind==="mednew"){
   const field=["name","form","quantity","unit","expires_at","low_at","location","notes"][s.step];
   if(!field){await cancel(e,u);return medicineMenu(e,u);}
@@ -657,6 +667,10 @@ async function importData(e,u,document){
 }
 async function action(e,u,data){
  const viewer=actor(e,u);
+ if(data==="med:search"){
+  await session(e,u,"medsearch");
+  return send(e,u,"🔎 Введи повну назву препарату або її частину (від 2 символів).\n/cancel — скасувати");
+ }
  if(data==="med:new"){
   await session(e,u,"mednew");
   return send(e,u,medicinePrompts[0]+"\n/cancel — скасувати");
@@ -687,6 +701,21 @@ async function action(e,u,data){
   if(!await first(e,"SELECT id FROM medicine_items WHERE uid=? AND id=? AND archived=0",u,id))return medicineMenu(e,u);
   await session(e,u,"medstock:"+id);
   return send(e,u,"Скільки одиниць додалося до запасу? Введи ціле число.");
+ }
+ const medDiscard=data.match(/^meddiscard:(\d+)$/);
+ if(medDiscard){
+  const item=await first(e,"SELECT * FROM medicine_items WHERE uid=? AND id=? AND archived=0",u,+medDiscard[1]);
+  if(!item)return medicineMenu(e,u);
+  return send(e,u,"⚠️ Підтверди списання непридатного залишку «"+esc(item.name)+"» ("+medQuantity(item)+"). "+
+   "Це лише запис в обліку, не фізична утилізація.",[[key("✅ Списати й архівувати","meddiscardconfirm:"+item.id)],[key("⬅️ Скасувати","med:"+item.id)]]);
+ }
+ const medDiscardConfirm=data.match(/^meddiscardconfirm:(\d+)$/);
+ if(medDiscardConfirm){
+  const item=await first(e,"SELECT * FROM medicine_items WHERE uid=? AND id=? AND archived=0",u,+medDiscardConfirm[1]);
+  if(!item)return medicineMenu(e,u);
+  if(item.quantity>0)await medicineSetQuantity(e,u,item,0,"discarded");
+  await run(e,"UPDATE medicine_items SET archived=1,updated_at=CURRENT_TIMESTAMP WHERE uid=? AND id=?",u,item.id);
+  return send(e,u,"✅ Залишок списано, препарат перенесено в архів.",[[key("🧰 Аптечка","menu:medicines")]]);
  }
  const medArchive=data.match(/^medarchive:(\d+)$/);
  if(medArchive){

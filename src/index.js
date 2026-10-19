@@ -1,12 +1,43 @@
-const kinds={filters:"💧 Фільтри",tasks:"📋 Справи",shopping:"🛒 Покупки",expenses:"💸 Витрати",tds:"🧪 TDS води"};
-const prompts={filters:["Назва фільтра?","Дата останньої заміни: ДД.ММ.РРРР або сьогодні?","Інтервал заміни у днях?"],tasks:["Назва справи?","Коли виконати: ДД.ММ.РРРР або сьогодні?","Повторювати через скільки днів? (0 — не повторювати)"],shopping:["Що потрібно купити?","Кількість або примітка?"],expenses:["За що витрати?","Сума в гривнях?"],tds:["Результат TDS (ppm)?"]};
+const kinds={osmosis:"🚰 Мій осмос",filters:"💧 Фільтри",tasks:"📋 Справи",shopping:"🛒 Покупки",expenses:"💸 Витрати",tds:"🧪 TDS води"};
+const prompts={osmosis:["Як називається твоя система зворотного осмосу?","Марка та модель осмосу (або - якщо невідомо)?"],filters:["Назва фільтра?","Дата останньої заміни: ДД.ММ.РРРР або сьогодні?","Інтервал: 90 днів, 6 місяців або кінцева дата 31.12.2027?"],tasks:["Назва справи?","Коли виконати: ДД.ММ.РРРР або сьогодні?","Повторювати через скільки днів? (0 — не повторювати)"],shopping:["Що потрібно купити?","Кількість або примітка?"],expenses:["За що витрати?","Сума в гривнях?"],tds:["Результат TDS (ppm)?"]};
 const key=(text,callback_data)=>({text,callback_data});
-const kb=[["filters","tasks"],["shopping","expenses"],["tds","other"]].map(r=>r.map(x=>key(kinds[x]||"⚙️ Інше","menu:"+x)));
+const kb=[["osmosis","filters"],["tasks","shopping"],["expenses","tds"],["other"]].map(r=>r.map(x=>key(kinds[x]||"⚙️ Інше","menu:"+x)));
 const toHome=[[key("🏠 Головне меню","menu:home")]];
+const intervalButtons=[[key("📆 Дні","period:days"),key("🗓 Місяці","period:months"),key("🎯 Кінцева дата","period:date")]];
+function periodPrompt(mode){
+ return mode==="months"?"Скільки місяців? Наприклад: 6 (від 1 до 120).":mode==="date"?"Введіть дату наступної заміни у форматі ДД.ММ.РРРР. Бот сам порахує інтервал у днях.":"Скільки днів? Наприклад: 90 (від 1 до 3650). Можна також написати «6 міс» або кінцеву дату.";
+}
+
 function today(now=new Date()){const p=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Kyiv",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(now);const x=n=>p.find(y=>y.type===n).value;return x("year")+"-"+x("month")+"-"+x("day");}
 function hour(now){return +new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Kyiv",hour:"2-digit",hourCycle:"h23"}).format(now);}
 function add(d,n){const x=new Date(d+"T12:00:00Z");x.setUTCDate(x.getUTCDate()+n);return x.toISOString().slice(0,10);}
 function gap(a,b){return Math.round((Date.parse(b+"T12:00:00Z")-Date.parse(a+"T12:00:00Z"))/86400000);}
+function addMonths(date,count){
+ const [y,m,d]=date.split("-").map(Number);
+ const monthIndex=y*12+(m-1)+count;
+ const targetYear=Math.floor(monthIndex/12),targetMonth=monthIndex%12;
+ const monthLength=new Date(Date.UTC(targetYear,targetMonth+1,0)).getUTCDate();
+ return String(targetYear).padStart(4,"0")+"-"+String(targetMonth+1).padStart(2,"0")+"-"+String(Math.min(d,monthLength)).padStart(2,"0");
+}
+function dueFor(changed,unit,value){return unit==="months"?addMonths(changed,value):add(changed,value);}
+function filterInterval(text,changed,mode="days"){
+ const source=String(text||"").trim().toLowerCase();
+ const date=validDate(source);
+ if(date){const days=gap(changed,date);return days>0&&days<=3650?{unit:"days",value:days,due:date}:null;}
+ const m=source.match(/^(\d+)\s*(.*)$/);
+ if(!m)return null;
+ const n=Number(m[1]);if(!Number.isSafeInteger(n))return null;
+ const suffix=m[2].replace(/\./g,"").trim();
+ let unit;
+ if(!suffix) unit=mode==="date"?null:mode;
+ else if(/^(?:д|дн|день|дня|дні|днів|day|days)$/.test(suffix))unit="days";
+ else if(/^(?:міс|місяць|місяця|місяці|місяців|month|months|mo)$/.test(suffix))unit="months";
+ if(!unit||n<1||n>(unit==="months"?120:3650))return null;
+ const due=dueFor(changed,unit,n);
+ return gap(changed,due)<=3650?{unit,value:n,due}:null;
+}
+function intervalDisplay(item){const n=item.interval_value||item.days;return item.interval_unit==="months"&&item.interval_value>0?n+" міс.":n+" днів";}
+
 function validDate(s){s=String(s||"").trim();if(s==="сьогодні")return today();const m=s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);if(m)s=m[3]+"-"+m[2]+"-"+m[1];if(!/^\d{4}-\d{2}-\d{2}$/.test(s))return null;const d=new Date(s+"T12:00:00Z");return !isNaN(d)&&d.toISOString().slice(0,10)===s?s:null;}
 function fmt(s){return s.slice(8,10)+"."+s.slice(5,7)+"."+s.slice(0,4);}
 function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
@@ -24,6 +55,12 @@ async function session(e,u,kind,step=0,obj={}){await run(e,"INSERT INTO sessions
 const cancel=(e,u)=>run(e,"DELETE FROM sessions WHERE uid=?",u);
 async function menu(e,u,kind="home"){
  if(kind==="home"){const f=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='filters' AND due<=?",u,add(today(),7));const t=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='tasks' AND done=0 AND due<=?",u,add(today(),7));const s=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='shopping' AND done=0",u);return send(e,u,"<b>🏠 Оселя</b>\n\n💧 Фільтрів потребують уваги: "+f.n+"\n📋 Справ найближчим часом: "+t.n+"\n🛒 Покупок: "+s.n+"\n\nОберіть розділ:",kb);}
+ if(kind==="osmosis"){
+  const systems=await all(e,"SELECT * FROM osmosis_systems WHERE uid=? ORDER BY id DESC LIMIT 30",u);
+  const buttons=systems.map(x=>[key("🚰 "+x.title.slice(0,43),"system:"+x.id)]);
+  buttons.push([key("➕ Додати осмос","add:osmosis")],...toHome);
+  return send(e,u,"<b>🚰 Мій осмос</b>\n\n"+(systems.length?"Обери систему, щоб переглянути її фільтри, строки замін і заміри води.":"Додай свій осмос. Для нього можна вести окремі картриджі та вимірювання води.")+"\n",buttons);
+ }
  if(kind==="other")return send(e,u,"<b>⚙️ Додатково</b>\n\n/export — резервна копія JSON\n/import — імпорт у порожній профіль\n/cancel — скасувати\n/start — меню\n\nІмпорт старого вебсайту поки не підтримується.",[[key("📤 Експорт","export"),key("📥 Імпорт","import")],...toHome]);
  if(!kinds[kind])return menu(e,u);
  const rows=await all(e,"SELECT * FROM items WHERE uid=? AND kind=? AND done=0 ORDER BY COALESCE(due,'9999-12-31'),id DESC LIMIT 15",u,kind);
@@ -32,7 +69,29 @@ async function menu(e,u,kind="home"){
  opts.push([key("➕ Додати","add:"+kind)]);opts.push(...toHome);
  return send(e,u,"<b>"+kinds[kind]+"</b>\n\n"+(desc.length?desc.join("\n"):"Наразі записів немає."),opts);
 }
-async function detail(e,u,id){const x=await first(e,"SELECT * FROM items WHERE uid=? AND kind='filters' AND id=?",u,id);if(!x)return menu(e,u,"filters");const h=await all(e,"SELECT * FROM history WHERE uid=? AND item_id=? ORDER BY changed DESC LIMIT 5",u,id);return send(e,u,"<b>💧 "+esc(x.title)+"</b>\n\nОстання заміна: "+fmt(x.changed)+"\nНаступна: "+fmt(x.due)+"\nІнтервал: "+x.days+" днів\n\nІсторія:\n"+(h.length?h.map(z=>"• "+fmt(z.changed)+(z.amount?" · "+hryvnia(z.amount):"")).join("\n"):"Записів ще немає."),[[key("✅ Замінено сьогодні","replace:"+id)],[key("✏️ Новий інтервал","interval:"+id),key("🗑 Видалити","delete:"+id)],[key("⬅️ Назад","menu:filters")]]);
+async function systemDetail(e,u,id){
+ const x=await first(e,"SELECT * FROM osmosis_systems WHERE uid=? AND id=?",u,id);
+ if(!x)return menu(e,u,"osmosis");
+ const filters=await all(e,"SELECT * FROM items WHERE uid=? AND osmosis_id=? AND kind='filters' AND done=0 ORDER BY due,id LIMIT 30",u,id);
+ const tds=await first(e,"SELECT amount,changed FROM items WHERE uid=? AND osmosis_id=? AND kind='tds' ORDER BY id DESC LIMIT 1",u,id);
+ const desc=filters.length?filters.map(z=>"• "+esc(z.title)+" — "+fmt(z.due)+" ("+intervalDisplay(z)+")").join("\n"):"Фільтри поки не додані.";
+ const buttons=filters.map(z=>[key("💧 "+z.title.slice(0,35),"filter:"+z.id)]);
+ buttons.push([key("➕ Додати фільтр","add:filters:"+id),key("🧪 Записати TDS","add:tds:"+id)]);
+ buttons.push([key("🔗 Прив'язати наявні фільтри","attach:"+id)]);
+ buttons.push([key("⬅️ Мої осмоси","menu:osmosis")]);
+ return send(e,u,"<b>🚰 "+esc(x.title)+"</b>\n"+(x.model?"Модель: "+esc(x.model)+"\n":"")+"\n<b>Картриджі:</b>\n"+desc+"\n\n"+(tds?"🧪 Останній TDS: "+tds.amount+" ppm ("+fmt(tds.changed)+")":"🧪 Замірів TDS ще немає."),buttons);
+}
+async function attachFilters(e,u,id){
+ const device=await first(e,"SELECT id FROM osmosis_systems WHERE uid=? AND id=?",u,id);
+ if(!device)return menu(e,u,"osmosis");
+ const rows=await all(e,"SELECT id,title FROM items WHERE uid=? AND kind='filters' AND osmosis_id IS NULL ORDER BY id LIMIT 30",u);
+ if(!rows.length)return send(e,u,"Немає неприв'язаних фільтрів. Новий фільтр можна додати безпосередньо в картці осмосу.",[[key("⬅️ Назад","system:"+id)]]);
+ return send(e,u,"Обери картриджі, які належать цьому осмосу. Уже збережені дати та історія замін залишаться без змін.",[...rows.map(z=>[key("🔗 "+z.title.slice(0,36),"assign:"+id+":"+z.id)]),[key("⬅️ Назад","system:"+id)]]);
+}
+async function detail(e,u,id){const x=await first(e,"SELECT * FROM items WHERE uid=? AND kind='filters' AND id=?",u,id);if(!x)return menu(e,u,"filters");const h=await all(e,"SELECT * FROM history WHERE uid=? AND item_id=? ORDER BY changed DESC LIMIT 5",u,id);
+ const back=x.osmosis_id?"system:"+x.osmosis_id:"menu:filters";
+ return send(e,u,"<b>💧 "+esc(x.title)+"</b>\n\nОстання заміна: "+fmt(x.changed)+"\nНаступна: "+fmt(x.due)+"\nІнтервал: "+intervalDisplay(x)+"\n\nІсторія:\n"+(h.length?h.map(z=>"• "+fmt(z.changed)+(z.amount?" · "+hryvnia(z.amount):"")).join("\n"):"Записів ще немає."),[[key("✅ Замінено сьогодні","replace:"+id)],[key("✏️ Змінити інтервал","interval:"+id),key("🗑 Видалити","delete:"+id)],[key("⬅️ Назад",back)]]);
+
 }
 async function wizard(e,u,text,s){
  const p=JSON.parse(s.json);

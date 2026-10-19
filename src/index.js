@@ -544,7 +544,9 @@ async function exportData(e,u){
   type:"oselya-bot-v1",
   systems:await all(e,"SELECT * FROM osmosis_systems WHERE uid=?",u),
   items:await all(e,"SELECT * FROM items WHERE uid=? AND kind!='tds'",u),
-  history:await all(e,"SELECT * FROM history WHERE uid=?",u)
+  history:await all(e,"SELECT * FROM history WHERE uid=?",u),
+  medicines:await all(e,"SELECT * FROM medicine_items WHERE uid=?",u),
+  medicine_events:await all(e,"SELECT * FROM medicine_events WHERE uid=?",u)
  };
  const form=new FormData();
  form.append("chat_id",String(actor(e,u)));
@@ -568,7 +570,24 @@ async function importData(e,u,document){
   if(Array.isArray(b.history))b.history=b.history.filter(x=>keptIds.has(x.item_id));
  }
  const systems=Array.isArray(b.systems)?b.systems:[];
- if(b.type!=="oselya-bot-v1"||!Array.isArray(b.items)||!Array.isArray(b.history)||b.items.length+b.history.length+systems.length>500)throw Error("Некоректна копія цього бота.");
+ const medicines=Array.isArray(b.medicines)?b.medicines:[];
+ const medEvents=Array.isArray(b.medicine_events)?b.medicine_events:[];
+ if(b.type!=="oselya-bot-v1"||!Array.isArray(b.items)||!Array.isArray(b.history)||b.items.length+b.history.length+systems.length+medicines.length+medEvents.length>1000)throw Error("Некоректна копія цього бота.");
+ const medIds=new Set(medicines.map(x=>x.id));
+ if(medIds.size!==medicines.length)throw Error("Повторювані ID препаратів у копії.");
+ for(const med of medicines){
+  if(!Number.isSafeInteger(med.id)||!label(med.name)||String(med.form||"").length>80||
+      !Number.isSafeInteger(med.quantity)||med.quantity<0||med.quantity>99999||
+      !label(med.unit)||String(med.unit).length>80||
+      !Number.isSafeInteger(med.low_at)||med.low_at<0||med.low_at>99999||
+      String(med.location||"").length>80||String(med.notes||"").length>350||
+      (med.expires_at&&!validDate(med.expires_at))||
+      ![0,1].includes(med.archived))throw Error("Некоректні дані аптечки.");
+ }
+ for(const entry of medEvents){
+  if(!medIds.has(entry.medicine_id)||!Number.isSafeInteger(entry.delta)||Math.abs(entry.delta)>99999||
+    !["stock","used","adjust","discarded"].includes(entry.kind))throw Error("Некоректна історія аптечки.");
+ }
  const systemIds=new Set(systems.map(x=>x.id));
  const itemIds=new Set(b.items.map(x=>x.id));
  if(systemIds.size!==systems.length||itemIds.size!==b.items.length)throw Error("Повторювані ID у резервній копії.");
@@ -592,7 +611,8 @@ async function importData(e,u,document){
  }
  const currentItems=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=?",u);
  const currentSystems=await first(e,"SELECT COUNT(*) n FROM osmosis_systems WHERE uid=?",u);
- if(currentItems.n||currentSystems.n)throw Error("Імпорт можливий лише в порожній профіль.");
+ const currentMeds=await first(e,"SELECT COUNT(*) n FROM medicine_items WHERE uid=?",u);
+ if(currentItems.n||currentSystems.n||currentMeds.n)throw Error("Імпорт можливий лише в порожній профіль.");
  const newSystems=new Map();
  for(const x of systems){
   const result=await run(e,"INSERT INTO osmosis_systems(uid,title,model,installed_at) VALUES(?,?,?,?)",
@@ -611,6 +631,16 @@ async function importData(e,u,document){
  for(const h of b.history){
   await run(e,"INSERT INTO history(uid,item_id,changed,amount) VALUES(?,?,?,?)",
     u,ids.get(h.item_id),h.changed,h.amount);
+ }
+ const mappedMedicines=new Map();
+ for(const med of medicines){
+  const res=await run(e,"INSERT INTO medicine_items(uid,name,form,quantity,unit,expires_at,low_at,location,notes,archived) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    u,med.name,med.form||"",med.quantity,med.unit,med.expires_at||null,med.low_at,med.location||"",med.notes||"",med.archived);
+  mappedMedicines.set(med.id,res.meta.last_row_id);
+ }
+ for(const event of medEvents){
+  await run(e,"INSERT INTO medicine_events(uid,medicine_id,delta,kind) VALUES(?,?,?,?)",
+   u,mappedMedicines.get(event.medicine_id),event.delta,event.kind);
  }
  await cancel(e,u);
 }
@@ -923,4 +953,4 @@ export default {
  async scheduled(event,e){if(e.DB&&e.BOT_TOKEN)await reminders(e,new Date(event.scheduledTime));}
 };
 
-export {addMonths,filterInterval,dueFor,intervalDisplay,replacementPlan,calendarParts,calendarSpan,replacementStatus,filterIcon,notificationPhase,taskStatus};
+export {addMonths,filterInterval,dueFor,intervalDisplay,replacementPlan,calendarParts,calendarSpan,replacementStatus,filterIcon,notificationPhase,taskStatus,medicineState,medicineExpiryPhase,medicineEntry};

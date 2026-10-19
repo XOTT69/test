@@ -93,6 +93,15 @@ async function detail(e,u,id){const x=await first(e,"SELECT * FROM items WHERE u
  return send(e,u,"<b>💧 "+esc(x.title)+"</b>\n\nОстання заміна: "+fmt(x.changed)+"\nНаступна: "+fmt(x.due)+"\nІнтервал: "+intervalDisplay(x)+"\n\nІсторія:\n"+(h.length?h.map(z=>"• "+fmt(z.changed)+(z.amount?" · "+hryvnia(z.amount):"")).join("\n"):"Записів ще немає."),[[key("✅ Замінено сьогодні","replacenow:"+id)],[key("📅 Вказати дату заміни","replacedate:"+id)],[key("💸 Замінено з витратами","replace:"+id)],[key("✏️ Змінити інтервал","interval:"+id),key("🗑 Видалити","delete:"+id)],[key("⬅️ Назад",back)]]);
 
 }
+// Calculate next replacement from the previously saved interval (including calendar months).
+function replacementPlan(item,changed){
+ if(!validDate(changed))return null;
+ const unit=item.interval_unit==="months"&&item.interval_value>0?"months":"days";
+ const value=unit==="months"?item.interval_value:(item.interval_value||item.days);
+ if(!Number.isSafeInteger(value)||value<1)return null;
+ const due=dueFor(changed,unit,value);
+ return {changed,due,days:gap(changed,due),unit,value};
+}
 // Records a completed replacement and recalculates the next due date using the saved interval.
 // The date must follow the previous recorded replacement and cannot be in the future.
 async function recordReplacement(e,u,item,replacedOn,cost=0){
@@ -100,10 +109,9 @@ async function recordReplacement(e,u,item,replacedOn,cost=0){
   return send(e,u,"❗ Дата заміни не може бути в майбутньому.");
  if(replacedOn<=item.changed)
   return send(e,u,"ℹ️ Остання заміна вже записана на "+fmt(item.changed)+". Обери пізнішу дату, щоб не дублювати запис.");
- const unit=item.interval_unit==="months"&&item.interval_value>0?"months":"days";
- const value=unit==="months"?item.interval_value:(item.interval_value||item.days);
- if(!Number.isInteger(value)||value<1)return send(e,u,"❗ Спочатку налаштуй інтервал цього фільтра.");
- const due=dueFor(replacedOn,unit,value),days=gap(replacedOn,due);
+ const plan=replacementPlan(item,replacedOn);
+ if(!plan)return send(e,u,"❗ Спочатку налаштуй інтервал цього фільтра.");
+ const {due,days}=plan;
  // Optimistic guard: avoid processing an old button after another replacement.
  const result=await e.DB.batch([
   query(e,"UPDATE items SET changed=?,due=?,days=? WHERE uid=? AND kind='filters' AND id=? AND changed=?",replacedOn,due,days,u,item.id,item.changed),
@@ -347,4 +355,4 @@ export default {
  async scheduled(event,e){if(e.DB&&e.BOT_TOKEN)await reminders(e,new Date(event.scheduledTime));}
 };
 
-export {addMonths,filterInterval,dueFor,intervalDisplay};
+export {addMonths,filterInterval,dueFor,intervalDisplay,replacementPlan};

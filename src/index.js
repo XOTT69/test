@@ -321,15 +321,15 @@ function medicineEntry(text,field){
  if(field==="expires_at")return t==="-"?null:medicineExpiryDate(t);
  return null;
 }
-async function medicineSetQuantity(e,u,m,value,kind){
+async function medicineSetQuantity(e,u,m,value,kind,show=true){
  const delta=value-m.quantity;
- if(!delta)return medicineDetail(e,u,m.id);
+ if(!delta)return show?medicineDetail(e,u,m.id):undefined;
  await e.DB.batch([
   query(e,"UPDATE medicine_items SET quantity=?,updated_at=CURRENT_TIMESTAMP WHERE uid=? AND id=? AND quantity=?",value,u,m.id,m.quantity),
   query(e,"INSERT INTO medicine_events(uid,medicine_id,delta,kind) SELECT ?,?,?,? WHERE (SELECT quantity FROM medicine_items WHERE uid=? AND id=?)=?",u,m.id,delta,kind,u,m.id,value)
  ]);
  if(value>m.low_at&&value>0)await run(e,"DELETE FROM medicine_alerts WHERE medicine_id=? AND kind='low'",m.id);
- return medicineDetail(e,u,m.id);
+ return show?medicineDetail(e,u,m.id):undefined;
 }
 
 async function menu(e,u,kind="home"){
@@ -713,7 +713,7 @@ async function action(e,u,data){
  if(medDiscardConfirm){
   const item=await first(e,"SELECT * FROM medicine_items WHERE uid=? AND id=? AND archived=0",u,+medDiscardConfirm[1]);
   if(!item)return medicineMenu(e,u);
-  if(item.quantity>0)await medicineSetQuantity(e,u,item,0,"discarded");
+  if(item.quantity>0)await medicineSetQuantity(e,u,item,0,"discarded",false);
   await run(e,"UPDATE medicine_items SET archived=1,updated_at=CURRENT_TIMESTAMP WHERE uid=? AND id=?",u,item.id);
   return send(e,u,"✅ Залишок списано, препарат перенесено в архів.",[[key("🧰 Аптечка","menu:medicines")]]);
  }

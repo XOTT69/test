@@ -90,30 +90,53 @@ async function attachFilters(e,u,id){
 }
 async function detail(e,u,id){const x=await first(e,"SELECT * FROM items WHERE uid=? AND kind='filters' AND id=?",u,id);if(!x)return menu(e,u,"filters");const h=await all(e,"SELECT * FROM history WHERE uid=? AND item_id=? ORDER BY changed DESC LIMIT 5",u,id);
  const back=x.osmosis_id?"system:"+x.osmosis_id:"menu:filters";
- return send(e,u,"<b>💧 "+esc(x.title)+"</b>\n\nОстання заміна: "+fmt(x.changed)+"\nНаступна: "+fmt(x.due)+"\nІнтервал: "+intervalDisplay(x)+"\n\nІсторія:\n"+(h.length?h.map(z=>"• "+fmt(z.changed)+(z.amount?" · "+hryvnia(z.amount):"")).join("\n"):"Записів ще немає."),[[key("✅ Замінено сьогодні","replace:"+id)],[key("✏️ Змінити інтервал","interval:"+id),key("🗑 Видалити","delete:"+id)],[key("⬅️ Назад",back)]]);
+ return send(e,u,"<b>💧 "+esc(x.title)+"</b>\n\nОстання заміна: "+fmt(x.changed)+"\nНаступна: "+fmt(x.due)+"\nІнтервал: "+intervalDisplay(x)+"\n\nІсторія:\n"+(h.length?h.map(z=>"• "+fmt(z.changed)+(z.amount?" · "+hryvnia(z.amount):"")).join("\n"):"Записів ще немає."),[[key("✅ Замінено сьогодні","replacenow:"+id)],[key("📅 Вказати дату заміни","replacedate:"+id)],[key("💸 Замінено з витратами","replace:"+id)],[key("✏️ Змінити інтервал","interval:"+id),key("🗑 Видалити","delete:"+id)],[key("⬅️ Назад",back)]]);
 
+}
+// Records a completed replacement and recalculates the next due date using the saved interval.
+// The date must follow the previous recorded replacement and cannot be in the future.
+async function recordReplacement(e,u,item,replacedOn,cost=0){
+ if(!validDate(replacedOn)||replacedOn>today())
+  return send(e,u,"❗ Дата заміни не може бути в майбутньому.");
+ if(replacedOn<=item.changed)
+  return send(e,u,"ℹ️ Остання заміна вже записана на "+fmt(item.changed)+". Обери пізнішу дату, щоб не дублювати запис.");
+ const unit=item.interval_unit==="months"&&item.interval_value>0?"months":"days";
+ const value=unit==="months"?item.interval_value:(item.interval_value||item.days);
+ if(!Number.isInteger(value)||value<1)return send(e,u,"❗ Спочатку налаштуй інтервал цього фільтра.");
+ const due=dueFor(replacedOn,unit,value),days=gap(replacedOn,due);
+ // Optimistic guard: avoid processing an old button after another replacement.
+ const result=await e.DB.batch([
+  query(e,"UPDATE items SET changed=?,due=?,days=? WHERE uid=? AND kind='filters' AND id=? AND changed=?",replacedOn,due,days,u,item.id,item.changed),
+  query(e,"INSERT INTO history(uid,item_id,changed,amount) SELECT ?,?,?,? WHERE (SELECT changed FROM items WHERE uid=? AND id=?)=? AND NOT EXISTS(SELECT 1 FROM history WHERE uid=? AND item_id=? AND changed=?)",u,item.id,replacedOn,cost,u,item.id,replacedOn,u,item.id,replacedOn),
+  ...(cost>0?[query(e,"INSERT INTO items(uid,kind,title,amount,changed) SELECT ?,'expenses',?,?,? WHERE changes()=1",u,"Заміна: "+item.title,cost,replacedOn)]:[])
+ ]);
+ if(!result[0]?.meta?.changes){
+  return send(e,u,"ℹ️ Цей запис уже оновлено. Відкрий фільтр ще раз, щоб побачити актуальні дати.");
+ }
+ await cancel(e,u);
+ await send(e,u,"✅ Заміну "+esc(item.title)+" записано на "+fmt(replacedOn)+".\n🔔 Наступна заміна: <b>"+fmt(due)+"</b> ("+intervalDisplay(item)+").");
+ return detail(e,u,item.id);
 }
 async function wizard(e,u,text,s){
  const p=JSON.parse(s.json);
- if(s.kind.startsWith("replace:")||s.kind.startsWith("interval:")){
+ if(s.kind.startsWith("replace:")||s.kind.startsWith("interval:")||s.kind.startsWith("replacedate:")){
   const id=+s.kind.split(":")[1],item=await first(e,"SELECT * FROM items WHERE uid=? AND kind='filters' AND id=?",u,id);
   if(!item){await cancel(e,u);return menu(e,u,"filters");}
   if(s.kind.startsWith("interval:")){
    const interval=filterInterval(text,item.changed,p.mode||"days");
    if(!interval)return send(e,u,"❗ Неправильний інтервал. Приклади: 90 днів, 6 місяців або 31.12.2027.",intervalButtons);
-   await run(e,"UPDATE items SET days=?,interval_unit=?,interval_value=?,due=? WHERE uid=? AND id=?",
-     gap(item.changed,interval.due),interval.unit,interval.value,interval.due,u,id);
-  }else{
-   const amount=text==="-"?0:sum(text);
-   if(amount===null)return send(e,u,"Введіть суму або - без витрат.");
-   const changed=today(),due=dueFor(changed,item.interval_unit||"days",item.interval_value||item.days);
-   await e.DB.batch([
-     query(e,"UPDATE items SET changed=?,due=?,days=? WHERE uid=? AND id=?",changed,due,gap(changed,due),u,id),
-     query(e,"INSERT INTO history(uid,item_id,changed,amount) VALUES(?,?,?,?)",u,id,changed,amount),
-     ...(amount?[query(e,"INSERT INTO items(uid,kind,title,amount,changed) VALUES(?,?,?,?,?)",u,"expenses","Заміна: "+item.title,amount,changed)]:[])
-   ]);
+   await run(e,"UPDATE items SET days=?,interval_unit=?,interval_value=?,due=? WHERE uid=? AND id=?",gap(item.changed,interval.due),interval.unit,interval.value,interval.due,u,id);
+   await cancel(e,u);
+   return detail(e,u,id);
   }
-  await cancel(e,u);return detail(e,u,id);
+  if(s.kind.startsWith("replacedate:")){
+   const date=validDate(text);
+   if(!date)return send(e,u,"❗ Введи дату у форматі ДД.ММ.РРРР (наприклад, 15.10.2026) або «сьогодні».");
+   return recordReplacement(e,u,item,date);
+  }
+  const amount=text==="-"?0:sum(text);
+  if(amount===null)return send(e,u,"Введіть суму або - без витрат.");
+  return recordReplacement(e,u,item,today(),amount);
  }
  const k=s.kind,n=s.step;if(!prompts[k])return false;
  if(k==="osmosis"){
@@ -261,14 +284,21 @@ async function action(e,u,data){
  }
  if(data==="export")return exportData(e,u);
  if(data==="import"){await session(e,u,"import");return send(e,u,"📥 Надішліть JSON-файл від /export. Імпорт тільки в порожній профіль.");}
- const m=data.match(/^(filter|replace|interval|delete|done):(\d+)$/);if(!m)return menu(e,u);
+ const m=data.match(/^(filter|replacenow|replacedate|replace|interval|delete|done):(\d+)$/);if(!m)return menu(e,u);
  const id=+m[2],verb=m[1];
  if(verb==="filter")return detail(e,u,id);
  const x=await first(e,"SELECT * FROM items WHERE uid=? AND id=?",u,id);if(!x)return menu(e,u);
- if(verb==="replace"||verb==="interval"){
+ if(verb==="replacenow"){
+  if(x.kind!=="filters")return menu(e,u);
+  return recordReplacement(e,u,x,today());
+ }
+ if(verb==="replace"||verb==="interval"||verb==="replacedate"){
   if(x.kind!=="filters")return menu(e,u);
   await session(e,u,verb+":"+id);
-  return send(e,u,verb==="replace"?"Вартість заміни у грн (або -)?":"Новий інтервал: 90 днів, 6 місяців або дата 31.12.2027?",verb==="interval"?intervalButtons:undefined);
+  const prompt=verb==="replace"?"Вартість заміни сьогодні у грн (або - без витрат)?":
+    verb==="replacedate"?"Коли замінив фільтр? Введи ДД.ММ.РРРР або «сьогодні». Інтервал збережений і буде застосований автоматично.":
+    "Новий інтервал: 90 днів, 6 місяців або дата 31.12.2027?";
+  return send(e,u,prompt,verb==="interval"?intervalButtons:undefined);
  }
  if(verb==="delete"){
   if(x.kind!=="filters")return menu(e,u);

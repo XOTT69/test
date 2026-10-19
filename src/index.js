@@ -154,17 +154,73 @@ async function wizard(e,u,text,s){
  await cancel(e,u);await send(e,u,"✅ Збережено.");
  return p.osmosis_id&&["filters","tds"].includes(k)?systemDetail(e,u,p.osmosis_id):menu(e,u,k);
 }
-async function exportData(e,u){const backup={type:"oselya-bot-v1",items:await all(e,"SELECT * FROM items WHERE uid=?",u),history:await all(e,"SELECT * FROM history WHERE uid=?",u)};const form=new FormData();form.append("chat_id",String(u));form.append("document",new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}),"oselya-"+today()+".json");const r=await fetch("https://api.telegram.org/bot"+e.BOT_TOKEN+"/sendDocument",{method:"POST",body:form});if(!r.ok)throw Error("Помилка експорту");const j=await r.json();if(!j.ok)throw Error(j.description);}
+async function exportData(e,u){
+ const backup={
+  type:"oselya-bot-v1",
+  systems:await all(e,"SELECT * FROM osmosis_systems WHERE uid=?",u),
+  items:await all(e,"SELECT * FROM items WHERE uid=?",u),
+  history:await all(e,"SELECT * FROM history WHERE uid=?",u)
+ };
+ const form=new FormData();
+ form.append("chat_id",String(u));
+ form.append("document",new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}),"oselya-"+today()+".json");
+ const r=await fetch("https://api.telegram.org/bot"+e.BOT_TOKEN+"/sendDocument",{method:"POST",body:form});
+ if(!r.ok)throw Error("Помилка експорту");
+ const j=await r.json();if(!j.ok)throw Error(j.description);
+}
 async function importData(e,u,document){
  if(document.file_size>1048576||!String(document.file_name||"").toLowerCase().endsWith(".json"))throw Error("Потрібен .json до 1 МБ.");
- const f=await tg(e,"getFile",{file_id:document.file_id});if(!f.file_path||f.file_size>1048576)throw Error("Недоступний файл.");
- const r=await fetch("https://api.telegram.org/file/bot"+e.BOT_TOKEN+"/"+f.file_path);if(!r.ok)throw Error("Не вдалося завантажити файл.");const bytes=await r.arrayBuffer();if(bytes.byteLength>1048576)throw Error("Завеликий файл.");
- const b=JSON.parse(new TextDecoder().decode(bytes));if(b.type!=="oselya-bot-v1"||!Array.isArray(b.items)||!Array.isArray(b.history)||b.items.length+b.history.length>500)throw Error("Некоректна копія цього бота.");
- if((await first(e,"SELECT COUNT(*) n FROM items WHERE uid=?",u)).n)throw Error("Імпорт можливий лише в порожній профіль.");
+ const file=await tg(e,"getFile",{file_id:document.file_id});
+ if(!file.file_path||file.file_size>1048576)throw Error("Недоступний файл.");
+ const r=await fetch("https://api.telegram.org/file/bot"+e.BOT_TOKEN+"/"+file.file_path);
+ if(!r.ok)throw Error("Не вдалося завантажити файл.");
+ const bytes=await r.arrayBuffer();if(bytes.byteLength>1048576)throw Error("Завеликий файл.");
+ const b=JSON.parse(new TextDecoder().decode(bytes));
+ const systems=Array.isArray(b.systems)?b.systems:[];
+ if(b.type!=="oselya-bot-v1"||!Array.isArray(b.items)||!Array.isArray(b.history)||b.items.length+b.history.length+systems.length>500)throw Error("Некоректна копія цього бота.");
+ const systemIds=new Set(systems.map(x=>x.id));
+ const itemIds=new Set(b.items.map(x=>x.id));
+ if(systemIds.size!==systems.length||itemIds.size!==b.items.length)throw Error("Повторювані ID у резервній копії.");
+ for(const x of systems){
+  if(!Number.isSafeInteger(x.id)||!label(x.title)||String(x.model||"").length>120)throw Error("Некоректні дані осмосу.");
+ }
+ for(const x of b.items){
+  if(!["filters","tasks","shopping","expenses","tds"].includes(x.kind)||!Number.isSafeInteger(x.id)||!label(x.title)||
+      !Number.isInteger(x.amount)||x.amount<0||x.amount>1000000000||
+      !Number.isInteger(x.days)||x.days<0||x.days>3650)throw Error("Некоректні дані запису.");
+  if(x.changed&&!validDate(x.changed))throw Error("Некоректна дата.");
+  if(x.due&&!validDate(x.due))throw Error("Некоректна дата.");
+  if(x.osmosis_id!=null&&!systemIds.has(x.osmosis_id))throw Error("Невідома система осмосу в копії.");
+  if(x.kind==="filters"){
+   const unit=x.interval_unit||"days",val=x.interval_value||x.days;
+   if(!["days","months"].includes(unit)||!Number.isInteger(val)||val<1||val>(unit==="months"?120:3650))throw Error("Некоректний інтервал фільтра.");
+  }
+ }
+ for(const h of b.history){
+  if(!itemIds.has(h.item_id)||!validDate(h.changed)||number(h.amount,0,1000000000)===null)throw Error("Некоректна історія.");
+ }
+ const currentItems=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=?",u);
+ const currentSystems=await first(e,"SELECT COUNT(*) n FROM osmosis_systems WHERE uid=?",u);
+ if(currentItems.n||currentSystems.n)throw Error("Імпорт можливий лише в порожній профіль.");
+ const newSystems=new Map();
+ for(const x of systems){
+  const result=await run(e,"INSERT INTO osmosis_systems(uid,title,model,installed_at) VALUES(?,?,?,?)",
+    u,x.title,String(x.model||""),x.installed_at&&validDate(x.installed_at)?x.installed_at:null);
+  newSystems.set(x.id,result.meta.last_row_id);
+ }
  const ids=new Map();
- for(const x of b.items){if(!kinds[x.kind]||!label(x.title)||!Number.isInteger(x.amount)||x.amount<0||x.amount>1000000000||!Number.isInteger(x.days)||x.days<0||x.days>3650)throw Error("Некоректні дані запису.");if(x.changed&&!validDate(x.changed))throw Error("Некоректна дата.");if(x.due&&!validDate(x.due))throw Error("Некоректна дата.");
-  const res=await run(e,"INSERT INTO items(uid,kind,title,done,changed,days,due,notes,amount) VALUES(?,?,?,?,?,?,?,?,?)",u,x.kind,x.title,x.done===1?1:0,x.changed||null,x.days,x.due||null,String(x.notes||"").slice(0,120),x.amount);ids.set(x.id,res.meta.last_row_id);}
- for(const h of b.history){if(!ids.has(h.item_id)||!validDate(h.changed)||number(h.amount,0,1000000000)===null)throw Error("Некоректна історія.");await run(e,"INSERT INTO history(uid,item_id,changed,amount) VALUES(?,?,?,?)",u,ids.get(h.item_id),h.changed,h.amount);}
+ for(const x of b.items){
+  const unit=x.kind==="filters"?(x.interval_unit||"days"):"days";
+  const interval=x.kind==="filters"?(x.interval_value||x.days):0;
+  const result=await run(e,"INSERT INTO items(uid,kind,title,done,changed,days,due,notes,amount,osmosis_id,interval_unit,interval_value) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+    u,x.kind,x.title,x.done===1?1:0,x.changed||null,x.days,x.due||null,String(x.notes||"").slice(0,120),
+    x.amount,x.osmosis_id==null?null:newSystems.get(x.osmosis_id),unit,interval);
+  ids.set(x.id,result.meta.last_row_id);
+ }
+ for(const h of b.history){
+  await run(e,"INSERT INTO history(uid,item_id,changed,amount) VALUES(?,?,?,?)",
+    u,ids.get(h.item_id),h.changed,h.amount);
+ }
  await cancel(e,u);
 }
 async function action(e,u,data){
@@ -260,3 +316,5 @@ export default {
  },
  async scheduled(event,e){if(e.DB&&e.BOT_TOKEN)await reminders(e,new Date(event.scheduledTime));}
 };
+
+export {addMonths,filterInterval,dueFor,intervalDisplay};

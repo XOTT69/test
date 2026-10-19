@@ -98,24 +98,61 @@ async function wizard(e,u,text,s){
  if(s.kind.startsWith("replace:")||s.kind.startsWith("interval:")){
   const id=+s.kind.split(":")[1],item=await first(e,"SELECT * FROM items WHERE uid=? AND kind='filters' AND id=?",u,id);
   if(!item){await cancel(e,u);return menu(e,u,"filters");}
-  if(s.kind.startsWith("interval:")){const n=number(text,1,3650);if(n===null)return send(e,u,"Введіть кількість днів від 1 до 3650.");await run(e,"UPDATE items SET days=?,due=? WHERE uid=? AND id=?",n,add(item.changed,n),u,id);}
-  else{const amount=text==="-"?0:sum(text);if(amount===null)return send(e,u,"Введіть суму або - без витрат.");const d=today();await e.DB.batch([query(e,"UPDATE items SET changed=?,due=? WHERE uid=? AND id=?",d,add(d,item.days),u,id),query(e,"INSERT INTO history(uid,item_id,changed,amount) VALUES(?,?,?,?)",u,id,d,amount),...(amount?[query(e,"INSERT INTO items(uid,kind,title,amount,changed) VALUES(?,?,?,?,?)",u,"expenses","Заміна: "+item.title,amount,d)]:[])]);}
+  if(s.kind.startsWith("interval:")){
+   const interval=filterInterval(text,item.changed,p.mode||"days");
+   if(!interval)return send(e,u,"❗ Неправильний інтервал. Приклади: 90 днів, 6 місяців або 31.12.2027.",intervalButtons);
+   await run(e,"UPDATE items SET days=?,interval_unit=?,interval_value=?,due=? WHERE uid=? AND id=?",
+     gap(item.changed,interval.due),interval.unit,interval.value,interval.due,u,id);
+  }else{
+   const amount=text==="-"?0:sum(text);
+   if(amount===null)return send(e,u,"Введіть суму або - без витрат.");
+   const changed=today(),due=dueFor(changed,item.interval_unit||"days",item.interval_value||item.days);
+   await e.DB.batch([
+     query(e,"UPDATE items SET changed=?,due=?,days=? WHERE uid=? AND id=?",changed,due,gap(changed,due),u,id),
+     query(e,"INSERT INTO history(uid,item_id,changed,amount) VALUES(?,?,?,?)",u,id,changed,amount),
+     ...(amount?[query(e,"INSERT INTO items(uid,kind,title,amount,changed) VALUES(?,?,?,?,?)",u,"expenses","Заміна: "+item.title,amount,changed)]:[])
+   ]);
+  }
   await cancel(e,u);return detail(e,u,id);
  }
  const k=s.kind,n=s.step;if(!prompts[k])return false;
- let val;if((k==="filters"||k==="tasks")&&n===1)val=validDate(text);
- else if((k==="filters"||k==="tasks")&&n===2)val=number(text,k==="filters"?1:0,3650);
- else if(k==="tds")val=number(text,0,9999);
- else if(k==="expenses"&&n===1)val=sum(text);
- else val=label(text);
- if(val===null)return send(e,u,"❗ Некоректне значення. Спробуйте ще раз або /cancel.");
- p[n]=val;if(n+1<prompts[k].length){await session(e,u,k,n+1,p);return send(e,u,prompts[k][n+1]+"\n/cancel — скасувати");}
- if(k==="filters")await run(e,"INSERT INTO items(uid,kind,title,changed,days,due) VALUES(?,'filters',?,?,?,?)",u,p[0],p[1],p[2],add(p[1],p[2]));
+ if(k==="osmosis"){
+  const value=n===1&&text.trim()==="-"?"":label(text);
+  if(value===null)return send(e,u,"❗ Введіть назву до 120 символів або - якщо модель невідома.");
+  p[n]=value;
+  if(n+1<prompts[k].length){await session(e,u,k,n+1,p);return send(e,u,prompts[k][n+1]+"\n/cancel — скасувати");}
+  const result=await run(e,"INSERT INTO osmosis_systems(uid,title,model) VALUES(?,?,?)",u,p[0],p[1]);
+  await cancel(e,u);
+  await send(e,u,"✅ Осмос додано! Тепер можеш додати до нього картриджі та заміри води.");
+  return systemDetail(e,u,result.meta.last_row_id);
+ }
+ let value;
+ if((k==="filters"||k==="tasks")&&n===1)value=validDate(text);
+ else if(k==="filters"&&n===2)value=filterInterval(text,p[1],p.mode||"days");
+ else if(k==="tasks"&&n===2)value=number(text,0,3650);
+ else if(k==="tds")value=number(text,0,9999);
+ else if(k==="expenses"&&n===1)value=sum(text);
+ else value=label(text);
+ if(value===null)return send(e,u,k==="filters"&&n===2?"❗ Введіть 90 днів, 6 місяців або майбутню кінцеву дату.": "❗ Некоректне значення. Спробуйте ще раз або /cancel.",k==="filters"&&n===2?intervalButtons:undefined);
+ p[n]=value;
+ if(n+1<prompts[k].length){
+  await session(e,u,k,n+1,p);
+  return send(e,u,prompts[k][n+1]+"\n/cancel — скасувати",k==="filters"&&n+1===2?intervalButtons:undefined);
+ }
+ if(k==="filters"){
+  const interval=p[2];
+  await run(e,"INSERT INTO items(uid,kind,title,changed,days,due,interval_unit,interval_value,osmosis_id) VALUES(?,'filters',?,?,?,?,?,?,?)",
+    u,p[0],p[1],gap(p[1],interval.due),interval.due,interval.unit,interval.value,p.osmosis_id||null);
+ }
  if(k==="tasks")await run(e,"INSERT INTO items(uid,kind,title,due,days) VALUES(?,'tasks',?,?,?)",u,p[0],p[1],p[2]);
  if(k==="shopping")await run(e,"INSERT INTO items(uid,kind,title,notes) VALUES(?,'shopping',?,?)",u,p[0],p[1]);
- if(k==="expenses"){if(p[1]===0)return send(e,u,"Сума має бути більшою за нуль.");await run(e,"INSERT INTO items(uid,kind,title,amount,changed) VALUES(?,'expenses',?,?,?)",u,p[0],p[1],today());}
- if(k==="tds")await run(e,"INSERT INTO items(uid,kind,title,amount,changed) VALUES(?,'tds','TDS',?,?)",u,p[0],today());
- await cancel(e,u);await send(e,u,"✅ Збережено.");return menu(e,u,k);
+ if(k==="expenses"){
+  if(p[1]===0)return send(e,u,"Сума має бути більшою за нуль.");
+  await run(e,"INSERT INTO items(uid,kind,title,amount,changed) VALUES(?,'expenses',?,?,?)",u,p[0],p[1],today());
+ }
+ if(k==="tds")await run(e,"INSERT INTO items(uid,kind,title,amount,changed,osmosis_id) VALUES(?,'tds','TDS',?,?,?)",u,p[0],today(),p.osmosis_id||null);
+ await cancel(e,u);await send(e,u,"✅ Збережено.");
+ return p.osmosis_id&&["filters","tds"].includes(k)?systemDetail(e,u,p.osmosis_id):menu(e,u,k);
 }
 async function exportData(e,u){const backup={type:"oselya-bot-v1",items:await all(e,"SELECT * FROM items WHERE uid=?",u),history:await all(e,"SELECT * FROM history WHERE uid=?",u)};const form=new FormData();form.append("chat_id",String(u));form.append("document",new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}),"oselya-"+today()+".json");const r=await fetch("https://api.telegram.org/bot"+e.BOT_TOKEN+"/sendDocument",{method:"POST",body:form});if(!r.ok)throw Error("Помилка експорту");const j=await r.json();if(!j.ok)throw Error(j.description);}
 async function importData(e,u,document){
@@ -132,15 +169,63 @@ async function importData(e,u,document){
 }
 async function action(e,u,data){
  if(data.startsWith("menu:"))return menu(e,u,data.slice(5));
- if(data.startsWith("add:")){const k=data.slice(4);if(!prompts[k])return menu(e,u);await session(e,u,k);return send(e,u,prompts[k][0]+"\n/cancel — скасувати");}
+ const sd=data.match(/^system:(\d+)$/);
+ if(sd)return systemDetail(e,u,+sd[1]);
+ const attached=data.match(/^attach:(\d+)$/);
+ if(attached)return attachFilters(e,u,+attached[1]);
+ const assigned=data.match(/^assign:(\d+):(\d+)$/);
+ if(assigned){
+  const id=+assigned[1],itemId=+assigned[2];
+  const exists=await first(e,"SELECT id FROM osmosis_systems WHERE uid=? AND id=?",u,id);
+  if(!exists)return menu(e,u,"osmosis");
+  await run(e,"UPDATE items SET osmosis_id=? WHERE uid=? AND kind='filters' AND id=? AND osmosis_id IS NULL",id,u,itemId);
+  return systemDetail(e,u,id);
+ }
+ if(data.startsWith("add:")){
+  const match=data.match(/^add:(osmosis|filters|tasks|shopping|expenses|tds)(?::(\d+))?$/);
+  if(!match)return menu(e,u);
+  const k=match[1],id=match[2]?+match[2]:null;
+  if(id){
+   if(!["filters","tds"].includes(k))return menu(e,u);
+   const exists=await first(e,"SELECT id FROM osmosis_systems WHERE uid=? AND id=?",u,id);
+   if(!exists)return menu(e,u,"osmosis");
+  }
+  await session(e,u,k,0,id?{osmosis_id:id}:{});
+  return send(e,u,prompts[k][0]+"\n/cancel — скасувати");
+ }
+ if(data.startsWith("period:")){
+  const mode=data.slice(7);
+  if(!["days","months","date"].includes(mode))return menu(e,u);
+  const current=await first(e,"SELECT * FROM sessions WHERE uid=?",u);
+  if(!current||!((current.kind==="filters"&&current.step===2)||current.kind.startsWith("interval:")))return menu(e,u);
+  const state=JSON.parse(current.json);
+  state.mode=mode;
+  await session(e,u,current.kind,current.step,state);
+  return send(e,u,periodPrompt(mode)+"\n/cancel — скасувати",intervalButtons);
+ }
  if(data==="export")return exportData(e,u);
  if(data==="import"){await session(e,u,"import");return send(e,u,"📥 Надішліть JSON-файл від /export. Імпорт тільки в порожній профіль.");}
- const m=data.match(/^(filter|replace|interval|delete|done):(\d+)$/);if(!m)return menu(e,u);const id=+m[2],verb=m[1];
+ const m=data.match(/^(filter|replace|interval|delete|done):(\d+)$/);if(!m)return menu(e,u);
+ const id=+m[2],verb=m[1];
  if(verb==="filter")return detail(e,u,id);
  const x=await first(e,"SELECT * FROM items WHERE uid=? AND id=?",u,id);if(!x)return menu(e,u);
- if(verb==="replace"||verb==="interval"){if(x.kind!=="filters")return menu(e,u);await session(e,u,verb+":"+id);return send(e,u,verb==="replace"?"Вартість заміни у грн (або -)?":"Новий інтервал у днях?");}
- if(verb==="delete"){if(x.kind!=="filters")return menu(e,u);await e.DB.batch([query(e,"DELETE FROM history WHERE uid=? AND item_id=?",u,id),query(e,"DELETE FROM items WHERE uid=? AND id=?",u,id)]);return menu(e,u,"filters");}
- if(verb==="done"){if(x.kind==="tasks"&&x.days>0){const cycles=Math.max(1,Math.floor(gap(x.due,today())/x.days)+1);await run(e,"UPDATE items SET due=? WHERE uid=? AND id=?",add(x.due,cycles*x.days),u,id);}else await run(e,"UPDATE items SET done=1 WHERE uid=? AND id=?",u,id);return menu(e,u,x.kind);}
+ if(verb==="replace"||verb==="interval"){
+  if(x.kind!=="filters")return menu(e,u);
+  await session(e,u,verb+":"+id);
+  return send(e,u,verb==="replace"?"Вартість заміни у грн (або -)?":"Новий інтервал: 90 днів, 6 місяців або дата 31.12.2027?",verb==="interval"?intervalButtons:undefined);
+ }
+ if(verb==="delete"){
+  if(x.kind!=="filters")return menu(e,u);
+  await e.DB.batch([query(e,"DELETE FROM history WHERE uid=? AND item_id=?",u,id),query(e,"DELETE FROM items WHERE uid=? AND id=?",u,id)]);
+  return x.osmosis_id?systemDetail(e,u,x.osmosis_id):menu(e,u,"filters");
+ }
+ if(verb==="done"){
+  if(x.kind==="tasks"&&x.days>0){
+   const cycles=Math.max(1,Math.floor(gap(x.due,today())/x.days)+1);
+   await run(e,"UPDATE items SET due=? WHERE uid=? AND id=?",add(x.due,cycles*x.days),u,id);
+  }else await run(e,"UPDATE items SET done=1 WHERE uid=? AND id=?",u,id);
+  return menu(e,u,x.kind);
+ }
 }
 async function handle(e,update){
  const msg=update.message,cb=update.callback_query,who=(msg||cb)?.from,chat=msg?.chat||cb?.message?.chat;if(!who||!chat||chat.type!=="private"||who.id!==chat.id||who.is_bot)return;const uid=who.id;
@@ -151,7 +236,7 @@ async function handle(e,update){
  const text=String(msg?.text||"").trim(),cmd=text.split(/\s+/)[0].split("@")[0].toLowerCase();
  if(cmd==="/start"||cmd==="/cancel"){await cancel(e,uid);return menu(e,uid);}
  if(cmd==="/export")return exportData(e,uid);if(cmd==="/import")return action(e,uid,"import");
- const c={"/filters":"filters","/tasks":"tasks","/shopping":"shopping","/expenses":"expenses","/tds":"tds","/help":"other"};
+ const c={"/osmosis":"osmosis","/filters":"filters","/tasks":"tasks","/shopping":"shopping","/expenses":"expenses","/tds":"tds","/help":"other"};
  if(c[cmd]){await cancel(e,uid);return menu(e,uid,c[cmd]);}
  if(text.startsWith("/"))return send(e,uid,"Невідома команда: /start");
  const s=await first(e,"SELECT * FROM sessions WHERE uid=?",uid);if(s&&s.kind!=="import")return wizard(e,uid,text,s);return menu(e,uid);

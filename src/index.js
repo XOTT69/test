@@ -1,7 +1,17 @@
-const kinds={agenda:"📅 План на тиждень",osmosis:"🚰 Мій осмос",filters:"💧 Фільтри",tasks:"📋 Справи",shopping:"🛒 Покупки",expenses:"💸 Витрати",stats:"📊 Статистика",family:"👨‍👩‍👧 Сім’я"};
+const kinds={agenda:"📅 План на тиждень",osmosis:"🚰 Мій осмос",filters:"💧 Фільтри",tasks:"📋 Справи",shopping:"🛒 Покупки",expenses:"💸 Витрати",medicines:"🧰 Аптечка",stats:"📊 Статистика",family:"👨‍👩‍👧 Сім’я"};
 const prompts={osmosis:["Як називається твоя система зворотного осмосу?","Марка та модель осмосу (або - якщо невідомо)?"],filters:["Назва фільтра?","Дата останньої заміни: ДД.ММ.РРРР або сьогодні?","Інтервал: 90 днів, 6 місяців або кінцева дата 31.12.2027?"],tasks:["Назва справи?","Коли виконати: ДД.ММ.РРРР або сьогодні?","Повторювати через скільки днів? (0 — не повторювати)"],shopping:["Що потрібно купити?","Кількість або примітка?"],expenses:["За що витрати?","Сума в гривнях?"]};
+const medicinePrompts=[
+ "Назва препарату? (наприклад, Парацетамол)",
+ "Форма та маркування на упаковці? (наприклад, таблетки 500 мг або -)",
+ "Скільки одиниць зараз? Введіть ціле число 0–99999.",
+ "В яких одиницях обліковуємо? (шт, табл, капс, мл, упаковок)",
+ "Термін придатності: ДД.ММ.РРРР або - якщо невідомий?",
+ "При якому залишку нагадувати про поповнення? 0 — вимкнути.",
+ "Місце зберігання? (наприклад, шафа у ванній, або -)",
+ "Примітка? (або - якщо немає)"
+];
 const key=(text,callback_data)=>({text,callback_data});
-const kb=[["agenda","osmosis"],["filters","tasks"],["shopping","expenses"],["stats","family"],["other"]].map(r=>r.map(x=>key(kinds[x]||"⚙️ Інше","menu:"+x)));
+const kb=[["agenda","osmosis"],["filters","tasks"],["shopping","expenses"],["medicines","stats"],["family"],["other"]].map(r=>r.map(x=>key(kinds[x]||"⚙️ Інше","menu:"+x)));
 const toHome=[[key("🏠 Головне меню","menu:home")]];
 const intervalButtons=[[key("📆 Дні","period:days"),key("🗓 Місяці","period:months"),key("🎯 Кінцева дата","period:date")]];
 function periodPrompt(mode){
@@ -197,14 +207,113 @@ async function redeemInvitation(e,uid,code){
  return true;
 }
 
+
+function medicineState(m,now=today()){
+ const q=Number(m.quantity||0),low=Number(m.low_at||0);
+ const hasDate=!!m.expires_at&&!!validDate(m.expires_at);
+ const left=hasDate?gap(now,m.expires_at):null;
+ const expired=hasDate&&left<0,expiring=hasDate&&left>=0&&left<=30;
+ const scarce=q===0||(low>0&&q<=low);
+ const icon=expired||left===0||q===0?"🔴":expiring||scarce?"🟠":hasDate?"🟢":"⚪";
+ const expiry=hasDate?(expired?"ПРОСТРОЧЕНО на "+(-left)+" днів":left===0?"Закінчується сьогодні":left<=30?"Придатний ще "+left+" днів":"Придатний до "+fmt(m.expires_at)):"Термін придатності не вказано";
+ return {icon,expiry,expired,expiring,scarce,left};
+}
+function medicineExpiryPhase(expires,now){
+ if(!expires||!validDate(expires))return null;
+ const days=gap(now,expires);
+ if(days===30)return "expiry30";
+ if(days===7)return "expiry7";
+ if(days===1)return "expiry1";
+ if(days===0)return "expiry0";
+ if(days===-1)return "expired1";
+ return null;
+}
+function medQuantity(m){return m.quantity+" "+esc(m.unit);}
+async function medicineMenu(e,u){
+ const rows=await all(e,"SELECT * FROM medicine_items WHERE uid=? AND archived=0 ORDER BY CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END,expires_at,name LIMIT 40",u);
+ const expired=rows.filter(m=>medicineState(m).expired).length;
+ const soon=rows.filter(m=>medicineState(m).expiring).length;
+ const low=rows.filter(m=>medicineState(m).scarce).length;
+ const list=rows.map(m=>"• "+medicineState(m).icon+" "+esc(m.name)+" ("+medQuantity(m)+") — "+medicineState(m).expiry);
+ const buttons=rows.map(m=>[key(medicineState(m).icon+" "+m.name.slice(0,35),"med:"+m.id)]);
+ buttons.push([key("➕ Додати препарат","med:new")],[key("📦 Архів аптечки","med:archive")],...toHome);
+ return send(e,u,"<b>🧰 Домашня аптечка</b>\n\n🔴 Прострочених позицій: "+expired+
+ "\n🟠 Придатність ≤30 днів: "+soon+"\n📉 Малий або нульовий запас: "+low+
+ "\n\n"+(list.length?list.join("\n"):"Аптечка порожня. Додай перший препарат.")+
+ (rows.length===40?"\nПоказано перші 40 позицій.":"")+
+ "\n\n⚠️ Дані довідкові: перевіряй оригінальну упаковку. Не використовуй прострочені ліки. Список бачать усі запрошені члени сім’ї.",buttons);
+}
+async function medicineArchive(e,u){
+ const rows=await all(e,"SELECT id,name FROM medicine_items WHERE uid=? AND archived=1 ORDER BY id DESC LIMIT 30",u);
+ return send(e,u,"<b>📦 Архів аптечки</b>\n\n"+(rows.length?rows.map(x=>"• "+esc(x.name)).join("\n"):"Архів поки порожній."),
+ [...rows.map(x=>[key("♻️ Повернути "+x.name.slice(0,25),"medrestore:"+x.id)]),[key("⬅️ Аптечка","menu:medicines")]]);
+}
+async function medicineDetail(e,u,id){
+ const m=await first(e,"SELECT * FROM medicine_items WHERE uid=? AND id=?",u,id);
+ if(!m)return medicineMenu(e,u);
+ const state=medicineState(m);
+ const events=await all(e,"SELECT delta,kind,created_at FROM medicine_events WHERE uid=? AND medicine_id=? ORDER BY id DESC LIMIT 5",u,id);
+ const history=events.map(x=>"• "+x.created_at.slice(0,10)+" · "+(x.delta>0?"+":"")+x.delta+" "+esc(m.unit)+" ("+(x.kind==="used"?"використано":x.kind==="stock"?"додано":x.kind==="discarded"?"списано":"коригування")+")").join("\n");
+ const buttons=[[key("➖ Використано 1 "+m.unit.slice(0,12),"meduse:"+id),key("➕ Поповнити","medstock:"+id)],
+ [key("✏️ Редагувати","mededit:"+id),key("🗑 До архіву","medarchive:"+id)],
+ [key("⬅️ Аптечка","menu:medicines")]];
+ return send(e,u,"<b>"+state.icon+" "+esc(m.name)+"</b>\n"+
+ (m.form?"Форма/маркування: "+esc(m.form)+"\n":"")+
+ "Запас: <b>"+medQuantity(m)+"</b>\n"+
+ "Попереджати при ≤ "+m.low_at+" "+esc(m.unit)+"\n"+
+ "Придатний до: "+(m.expires_at?fmt(m.expires_at):"не вказано")+
+ "\n"+state.icon+" "+state.expiry+
+ (state.scarce?"\n📉 Потрібно поповнити запас.":"")+
+ (m.location?"\n📍 Місце: "+esc(m.location):"")+
+ (m.notes?"\n📝 "+esc(m.notes):"")+
+ "\n\n<b>Останні зміни:</b>\n"+(history||"Ще немає.")+
+ "\n\n⚠️ Облік запасів, не медичні рекомендації.",
+ buttons);
+}
+async function medicineEditMenu(e,u,id){
+ const m=await first(e,"SELECT id,name FROM medicine_items WHERE uid=? AND id=? AND archived=0",u,id);
+ if(!m)return medicineMenu(e,u);
+ return send(e,u,"<b>✏️ "+esc(m.name)+"</b>\nЩо змінити?",[
+ [key("🏷 Назва","medfield:"+id+":name"),key("💊 Форма","medfield:"+id+":form")],
+ [key("📦 Кількість","medfield:"+id+":quantity"),key("⚖️ Одиниця","medfield:"+id+":unit")],
+ [key("📅 Придатність","medfield:"+id+":expires_at"),key("🔔 Мінімальний запас","medfield:"+id+":low_at")],
+ [key("📍 Місце","medfield:"+id+":location"),key("📝 Примітка","medfield:"+id+":notes")],
+ [key("⬅️ Назад","med:"+id)]]);
+}
+function medicineEntry(text,field){
+ const t=String(text||"").trim();
+ if(["name","form","unit","location","notes"].includes(field)){
+  if(t==="-")return field==="name"||field==="unit"?null:"";
+  const max=field==="notes"?350:field==="name"?120:80;
+  return t&&t.length<=max?t:null;
+ }
+ if(field==="quantity")return number(t,0,99999);
+ if(field==="low_at")return number(t,0,99999);
+ if(field==="expires_at")return t==="-"?null:validDate(t);
+ return null;
+}
+async function medicineSetQuantity(e,u,m,value,kind){
+ const delta=value-m.quantity;
+ if(!delta)return medicineDetail(e,u,m.id);
+ await e.DB.batch([
+  query(e,"UPDATE medicine_items SET quantity=?,updated_at=CURRENT_TIMESTAMP WHERE uid=? AND id=? AND quantity=?",value,u,m.id,m.quantity),
+  query(e,"INSERT INTO medicine_events(uid,medicine_id,delta,kind) SELECT ?,?,?,? WHERE (SELECT quantity FROM medicine_items WHERE uid=? AND id=?)=?",u,m.id,delta,kind,u,m.id,value)
+ ]);
+ if(value>m.low_at&&value>0)await run(e,"DELETE FROM medicine_alerts WHERE medicine_id=? AND kind='low'",m.id);
+ return medicineDetail(e,u,m.id);
+}
+
 async function menu(e,u,kind="home"){
  if(kind==="home"){
   const overdue=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='filters' AND done=0 AND due<=?",u,today());
   const soon=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='filters' AND done=0 AND due>? AND due<=?",u,today(),add(today(),7));
   const tasks=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='tasks' AND done=0 AND due<=?",u,add(today(),7));
   const shopping=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='shopping' AND done=0",u);
-  return send(e,u,"<b>🏠 Оселя</b>\n\n🔴 Фільтрів замінити зараз: "+overdue.n+"\n🟠 Фільтрів замінити протягом 7 днів: "+soon.n+"\n📋 Справ на 7 днів: "+tasks.n+"\n🛒 Покупок: "+shopping.n+"\n\nОберіть розділ:",kb);
+ const medicineDue=await first(e,"SELECT COUNT(*) n FROM medicine_items WHERE uid=? AND archived=0 AND expires_at<=?",u,add(today(),30));
+ const medicineLow=await first(e,"SELECT COUNT(*) n FROM medicine_items WHERE uid=? AND archived=0 AND (quantity=0 OR (low_at>0 AND quantity<=low_at))",u);
+  return send(e,u,"<b>🏠 Оселя</b>\n\n🔴 Фільтрів замінити зараз: "+overdue.n+"\n🟠 Фільтрів замінити протягом 7 днів: "+soon.n+"\n📋 Справ на 7 днів: "+tasks.n+"\n🛒 Покупок: "+shopping.n+"\n🧰 Ліків з терміном ≤30 днів: "+medicineDue.n+"\n📉 Малий запас ліків: "+medicineLow.n+"\n\nОберіть розділ:",kb);
  }
+ if(kind==="medicines")return medicineMenu(e,u);
  if(kind==="agenda")return agenda(e,u);
  if(kind==="stats")return statistics(e,u);
  if(kind==="family")return familyMenu(e,u);

@@ -227,6 +227,23 @@ async function systemDetail(e,u,id){
  buttons.push([key("⬅️ Мої осмоси","menu:osmosis")]);
  return send(e,u,"<b>🚰 "+esc(x.title)+"</b>\n"+(x.model?"Модель: "+esc(x.model)+"\n":"Модель: не вказана\n")+(x.installed_at?"Встановлено: "+fmt(x.installed_at)+"\n":"Дата встановлення: не вказана\n")+"\n<b>Картриджі:</b>\n"+desc,buttons);
 }
+
+async function taskDetail(e,u,id){
+ const x=await first(e,"SELECT * FROM items WHERE uid=? AND kind='tasks' AND id=?",u,id);
+ if(!x)return menu(e,u,"tasks");
+ return send(e,u,"<b>📋 "+esc(x.title)+"</b>\n\nТермін: "+fmt(x.due)+
+ "\n"+replacementStatus(x.due)+"\nПовтор: "+(x.days>0?"кожні "+x.days+" днів":"одноразова справа"),
+ [[key("✅ Виконано","done:"+id)],[key("✏️ Змінити назву","taskedit:"+id+":title"),key("📆 Змінити дату","taskedit:"+id+":due")],
+  [key("🔁 Повторення","taskedit:"+id+":days"),key("🗑 Видалити","taskdelete:"+id)],[key("⬅️ До справ","menu:tasks")]]);
+}
+async function editSystemMenu(e,u,id){
+ const x=await first(e,"SELECT id FROM osmosis_systems WHERE uid=? AND id=?",u,id);
+ if(!x)return menu(e,u,"osmosis");
+ return send(e,u,"<b>✏️ Редагування осмосу</b>\n\nЩо змінити?",
+ [[key("🏷 Назву","sysfield:"+id+":title")],[key("🏭 Модель","sysfield:"+id+":model")],
+ [key("📅 Дату встановлення","sysfield:"+id+":installed")],[key("⬅️ Назад","system:"+id)]]);
+}
+
 async function attachFilters(e,u,id){
  const device=await first(e,"SELECT id FROM osmosis_systems WHERE uid=? AND id=?",u,id);
  if(!device)return menu(e,u,"osmosis");
@@ -258,6 +275,7 @@ async function recordReplacement(e,u,item,replacedOn,cost=0){
  const plan=replacementPlan(item,replacedOn);
  if(!plan)return send(e,u,"❗ Спочатку налаштуй інтервал цього фільтра.");
  const {due,days}=plan;
+ await run(e,"DELETE FROM snoozes WHERE item_id=?",item.id);
  // Optimistic guard: avoid processing an old button after another replacement.
  const result=await e.DB.batch([
   query(e,"UPDATE items SET changed=?,due=?,days=? WHERE uid=? AND kind='filters' AND id=? AND changed=?",replacedOn,due,days,u,item.id,item.changed),
@@ -273,6 +291,32 @@ async function recordReplacement(e,u,item,replacedOn,cost=0){
 }
 async function wizard(e,u,text,s){
  const p=JSON.parse(s.json);
+ if(s.kind.startsWith("sysedit:")){
+  const match=s.kind.match(/^sysedit:(\d+):(title|model|installed)$/);
+  if(!match)return menu(e,u,"osmosis");
+  const id=+match[1],field=match[2];
+  const entry=await first(e,"SELECT id FROM osmosis_systems WHERE id=? AND uid=?",id,u);
+  if(!entry){await cancel(e,u);return menu(e,u,"osmosis");}
+  let value=field==="installed"?(text.trim()==="-"?null:validDate(text)):(text.trim()==="-"&&field==="model"?"":label(text));
+  if(value===null&&!(field==="installed"&&text.trim()==="-"))return send(e,u,"❗ Невірний формат. Назва/модель — до 120 символів, дата — ДД.ММ.РРРР або - для очищення.");
+  if(field==="title"&&(!value||value==="-"))return send(e,u,"Назва не може бути порожньою.");
+  const column=field==="installed"?"installed_at":field;
+  await run(e,"UPDATE osmosis_systems SET "+column+"=? WHERE uid=? AND id=?",value,u,id);
+  await cancel(e,u);return systemDetail(e,u,id);
+ }
+ if(s.kind.startsWith("taskedit:")){
+  const match=s.kind.match(/^taskedit:(\d+):(title|due|days)$/);
+  if(!match)return menu(e,u,"tasks");
+  const id=+match[1],field=match[2];
+  const item=await first(e,"SELECT id FROM items WHERE uid=? AND kind='tasks' AND id=?",u,id);
+  if(!item){await cancel(e,u);return menu(e,u,"tasks");}
+  const value=field==="due"?validDate(text):field==="days"?number(text,0,3650):label(text);
+  if(value===null)return send(e,u,"❗ Невірне значення. Дата ДД.ММ.РРРР, повтор у днях (0–3650) або назва до 120 символів.");
+  await run(e,"UPDATE items SET "+field+"=? WHERE uid=? AND id=?",value,u,id);
+  await run(e,"DELETE FROM snoozes WHERE item_id=?",id);
+  await cancel(e,u);return taskDetail(e,u,id);
+ }
+
  if(s.kind.startsWith("replace:")||s.kind.startsWith("interval:")||s.kind.startsWith("replacedate:")){
   const id=+s.kind.split(":")[1],item=await first(e,"SELECT * FROM items WHERE uid=? AND kind='filters' AND id=?",u,id);
   if(!item){await cancel(e,u);return menu(e,u,"filters");}
@@ -337,7 +381,7 @@ async function exportData(e,u){
   history:await all(e,"SELECT * FROM history WHERE uid=?",u)
  };
  const form=new FormData();
- form.append("chat_id",String(u));
+ form.append("chat_id",String(actor(e,u)));
  form.append("document",new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}),"oselya-"+today()+".json");
  const r=await fetch("https://api.telegram.org/bot"+e.BOT_TOKEN+"/sendDocument",{method:"POST",body:form});
  if(!r.ok)throw Error("Помилка експорту");
@@ -405,9 +449,72 @@ async function importData(e,u,document){
  await cancel(e,u);
 }
 async function action(e,u,data){
+ const viewer=actor(e,u);
  if(data.startsWith("menu:"))return menu(e,u,data.slice(5));
+ if(data==="notifications")return notificationsMenu(e,u);
+ if(data==="notify:enabled"||data==="notify:warnings"){
+  const field=data.slice(7);
+  const pref=await notificationPrefs(e,viewer);
+  const next=field==="enabled"?!pref.enabled:!pref.warnings;
+  const enabled=field==="enabled"?Number(next):Number(pref.enabled);
+  const warnings=field==="warnings"?Number(next):Number(pref.warnings);
+  await run(e,"INSERT INTO notification_settings(uid,enabled,warnings) VALUES(?,?,?) ON CONFLICT(uid) DO UPDATE SET enabled=excluded.enabled,warnings=excluded.warnings",viewer,enabled,warnings);
+  return notificationsMenu(e,u);
+ }
+ if(data==="family:invite")return issueInvitation(e,u);
+ if(data==="family:leave"){
+  if(viewer===u)return familyMenu(e,u);
+  await run(e,"DELETE FROM family_members WHERE uid=? AND owner_uid=?",viewer,u);
+  await run(e,"DELETE FROM snoozes WHERE uid=?",viewer);
+  await cancel(e,u);
+  return send(e,u,"✅ Ти вийшов зі спільної оселі. Доступ до її даних припинено.");
+ }
+ const removeAsk=data.match(/^familyremove:(\d+)$/);
+ if(removeAsk){
+  if(viewer!==u)return familyMenu(e,u);
+  const uid=+removeAsk[1];
+  const m=await first(e,"SELECT uid FROM family_members WHERE owner_uid=? AND uid=?",u,uid);
+  if(!m)return familyMenu(e,u);
+  return send(e,u,"⚠️ Відключити користувача "+uid+" від спільної оселі? Він більше не побачить дані й не отримуватиме нагадувань.",[[key("🚫 Так, відключити","familyconfirm:"+uid)],[key("Скасувати","menu:family")]]);
+ }
+ const removeConfirm=data.match(/^familyconfirm:(\d+)$/);
+ if(removeConfirm){
+  if(viewer!==u)return familyMenu(e,u);
+  const uid=+removeConfirm[1];
+  await run(e,"DELETE FROM family_members WHERE owner_uid=? AND uid=?",u,uid);
+  await run(e,"DELETE FROM snoozes WHERE uid=?",uid);
+  await send(e,u,"✅ Учасника відключено.");
+  return familyMenu(e,u);
+ }
  const sd=data.match(/^system:(\d+)$/);
  if(sd)return systemDetail(e,u,+sd[1]);
+ const se=data.match(/^sysedit:(\d+)$/);
+ if(se)return editSystemMenu(e,u,+se[1]);
+ const sf=data.match(/^sysfield:(\d+):(title|model|installed)$/);
+ if(sf){
+  const id=+sf[1],field=sf[2];
+  if(!await first(e,"SELECT id FROM osmosis_systems WHERE uid=? AND id=?",u,id))return menu(e,u,"osmosis");
+  await session(e,u,"sysedit:"+id+":"+field);
+  const prompt=field==="installed"?"Вкажи дату встановлення (ДД.ММ.РРРР або сьогодні) або - щоб очистити.":
+    field==="model"?"Вкажи виробника й модель (або - щоб очистити).":"Вкажи нову назву осмосу.";
+  return send(e,u,prompt+"\n/cancel — скасувати");
+ }
+ const task=data.match(/^task:(\d+)$/);
+ if(task)return taskDetail(e,u,+task[1]);
+ const taskedit=data.match(/^taskedit:(\d+):(title|due|days)$/);
+ if(taskedit){
+  const id=+taskedit[1],field=taskedit[2];
+  if(!await first(e,"SELECT id FROM items WHERE uid=? AND kind='tasks' AND id=?",u,id))return menu(e,u,"tasks");
+  await session(e,u,"taskedit:"+id+":"+field);
+  return send(e,u,field==="title"?"Нова назва справи?":field==="due"?"Нова дата: ДД.ММ.РРРР або сьогодні?":"Повторювати через скільки днів? 0 — без повтору.");
+ }
+ const taskdel=data.match(/^taskdelete:(\d+)$/);
+ if(taskdel){
+  const id=+taskdel[1];
+  await run(e,"DELETE FROM items WHERE uid=? AND id=? AND kind='tasks'",u,id);
+  await run(e,"DELETE FROM snoozes WHERE item_id=?",id);
+  return menu(e,u,"tasks");
+ }
  const attached=data.match(/^attach:(\d+)$/);
  if(attached)return attachFilters(e,u,+attached[1]);
  const assigned=data.match(/^assign:(\d+):(\d+)$/);
@@ -433,16 +540,29 @@ async function action(e,u,data){
  if(data.startsWith("period:")){
   const mode=data.slice(7);
   if(!["days","months","date"].includes(mode))return menu(e,u);
-  const current=await first(e,"SELECT * FROM sessions WHERE uid=?",u);
+  const current=await first(e,"SELECT * FROM sessions WHERE uid=?",viewer);
   if(!current||!((current.kind==="filters"&&current.step===2)||current.kind.startsWith("interval:")))return menu(e,u);
   const state=JSON.parse(current.json);
   state.mode=mode;
   await session(e,u,current.kind,current.step,state);
   return send(e,u,periodPrompt(mode)+"\n/cancel — скасувати",intervalButtons);
  }
- if(data==="export")return exportData(e,u);
- if(data==="import"){await session(e,u,"import");return send(e,u,"📥 Надішліть JSON-файл від /export. Імпорт тільки в порожній профіль.");}
- const m=data.match(/^(filter|replacenow|replacedate|replace|interval|delete|done):(\d+)$/);if(!m)return menu(e,u);
+ if(data==="export")return viewer===u?exportData(e,u):send(e,u,"Лише власник може експортувати спільну оселю.");
+ if(data==="import"){
+  if(viewer!==u)return send(e,u,"Лише власник може імпортувати дані.");
+  await session(e,u,"import");return send(e,u,"📥 Надішліть JSON-файл від /export. Імпорт тільки в порожній профіль.");
+ }
+ const snooze=data.match(/^snooze:(\d+)$/);
+ if(snooze){
+  const id=+snooze[1];
+  const item=await first(e,"SELECT id,kind,title FROM items WHERE uid=? AND done=0 AND kind IN ('filters','tasks') AND id=?",u,id);
+  if(!item)return menu(e,u,"agenda");
+  const date=add(today(),1);
+  await run(e,"INSERT INTO snoozes(uid,item_id,until_date) VALUES(?,?,?) ON CONFLICT(uid,item_id) DO UPDATE SET until_date=excluded.until_date",viewer,id,date);
+  return send(e,u,"⏰ Нагадаю про «"+esc(item.title)+"» завтра о 09:00 за Києвом, якщо воно ще актуальне.");
+ }
+ const m=data.match(/^(filter|replacenow|replacedate|replace|interval|delete|done):(\d+)$/);
+ if(!m)return menu(e,u);
  const id=+m[2],verb=m[1];
  if(verb==="filter")return detail(e,u,id);
  const x=await first(e,"SELECT * FROM items WHERE uid=? AND id=?",u,id);if(!x)return menu(e,u);
@@ -454,41 +574,95 @@ async function action(e,u,data){
   if(x.kind!=="filters")return menu(e,u);
   await session(e,u,verb+":"+id);
   const prompt=verb==="replace"?"Вартість заміни сьогодні у грн (або - без витрат)?":
-    verb==="replacedate"?"Коли замінив фільтр? Введи ДД.ММ.РРРР або «сьогодні». Інтервал збережений і буде застосований автоматично.":
+    verb==="replacedate"?"Коли замінив фільтр? Введи ДД.ММ.РРРР або «сьогодні». Інтервал буде застосований автоматично.":
     "Новий інтервал: 90 днів, 6 місяців або дата 31.12.2027?";
   return send(e,u,prompt,verb==="interval"?intervalButtons:undefined);
  }
  if(verb==="delete"){
   if(x.kind!=="filters")return menu(e,u);
   await e.DB.batch([query(e,"DELETE FROM history WHERE uid=? AND item_id=?",u,id),query(e,"DELETE FROM items WHERE uid=? AND id=?",u,id)]);
+  await run(e,"DELETE FROM snoozes WHERE item_id=?",id);
   return x.osmosis_id?systemDetail(e,u,x.osmosis_id):menu(e,u,"filters");
  }
  if(verb==="done"){
-  if(x.kind==="tasks"&&x.days>0){
+  if(x.kind!=="tasks")return menu(e,u);
+  if(x.done)return send(e,u,"Цю справу вже завершено.");
+  if(x.days>0){
    const cycles=Math.max(1,Math.floor(gap(x.due,today())/x.days)+1);
    await run(e,"UPDATE items SET due=? WHERE uid=? AND id=?",add(x.due,cycles*x.days),u,id);
   }else await run(e,"UPDATE items SET done=1 WHERE uid=? AND id=?",u,id);
-  return menu(e,u,x.kind);
+  await run(e,"DELETE FROM snoozes WHERE item_id=?",id);
+  await send(e,u,"✅ Справу виконано! "+(x.days>0?"Наступне повторення вже заплановано.":""));
+  return menu(e,u,"agenda");
  }
 }
 async function handle(e,update){
- const msg=update.message,cb=update.callback_query,who=(msg||cb)?.from,chat=msg?.chat||cb?.message?.chat;if(!who||!chat||chat.type!=="private"||who.id!==chat.id||who.is_bot)return;const uid=who.id;
- if(e.ALLOWED_USERS&&!e.ALLOWED_USERS.split(",").map(x=>x.trim()).includes(String(uid))){if(msg)await send(e,uid,"⛔ Цей бот приватний.");return;}
+ const msg=update.message,cb=update.callback_query,who=(msg||cb)?.from,chat=msg?.chat||cb?.message?.chat;
+ if(!who||!chat||chat.type!=="private"||who.id!==chat.id||who.is_bot)return;
+ const uid=who.id,content=String(msg?.text||"").trim();
+ const cmd=content.split(/\s+/)[0].split("@")[0].toLowerCase();
+ const invite=cmd==="/start"?content.match(/^\/start(?:@\w+)?\s+join_([a-f0-9]{36})$/i):null;
+ if(invite){
+  const accepted=await redeemInvitation(e,uid,invite[1].toLowerCase());
+  if(!accepted)return send(e,uid,"❗ Запрошення недійсне, прострочене або вже використане. Якщо ти вже ведеш власні записи, спочатку збережи їх через /export та попроси нове запрошення.");
+  await run(e,"INSERT INTO users(id,name) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name",uid,String(who.first_name||"").slice(0,80));
+  const joined=await first(e,"SELECT owner_uid FROM family_members WHERE uid=?",uid);
+  const ctx={...e,ACTOR_UID:uid};
+  await send(ctx,joined.owner_uid,"🎉 Ти приєднався до спільної «Оселі»! Всі розділи тепер доступні сім’ї.");
+  return menu(ctx,joined.owner_uid);
+ }
+ const membership=await first(e,"SELECT owner_uid FROM family_members WHERE uid=?",uid);
+ const allow=e.ALLOWED_USERS?e.ALLOWED_USERS.split(",").map(x=>x.trim()).includes(String(uid)):true;
+ if(!membership&&!allow){if(msg)await send(e,uid,"⛔ Цей бот приватний. Потрібне запрошення власника.");return;}
  await run(e,"INSERT INTO users(id,name) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name",uid,String(who.first_name||"").slice(0,80));
- if(cb){await tg(e,"answerCallbackQuery",{callback_query_id:cb.id});return action(e,uid,String(cb.data||""));}
- if(msg.document){const s=await first(e,"SELECT kind FROM sessions WHERE uid=?",uid);if(s?.kind!=="import")return send(e,uid,"Спочатку /import.");try{await importData(e,uid,msg.document);await send(e,uid,"✅ Копію імпортовано.");return menu(e,uid);}catch(err){return send(e,uid,"❗ "+esc(err.message));}}
- const text=String(msg?.text||"").trim(),cmd=text.split(/\s+/)[0].split("@")[0].toLowerCase();
- if(cmd==="/start"||cmd==="/cancel"){await cancel(e,uid);return menu(e,uid);}
- if(cmd==="/export")return exportData(e,uid);if(cmd==="/import")return action(e,uid,"import");
- const c={"/osmosis":"osmosis","/filters":"filters","/tasks":"tasks","/shopping":"shopping","/expenses":"expenses","/help":"other"};
- if(c[cmd]){await cancel(e,uid);return menu(e,uid,c[cmd]);}
- if(text.startsWith("/"))return send(e,uid,"Невідома команда: /start");
- const s=await first(e,"SELECT * FROM sessions WHERE uid=?",uid);if(s&&s.kind!=="import")return wizard(e,uid,text,s);return menu(e,uid);
+ const owner=membership?.owner_uid??uid,ctx={...e,ACTOR_UID:uid};
+ if(cb){
+  await tg(e,"answerCallbackQuery",{callback_query_id:cb.id});
+  return action(ctx,owner,String(cb.data||""));
+ }
+ if(msg.document){
+  if(owner!==uid)return send(ctx,owner,"Імпорт доступний лише власнику.");
+  const sessionData=await first(e,"SELECT kind FROM sessions WHERE uid=?",uid);
+  if(sessionData?.kind!=="import")return send(ctx,owner,"Спочатку /import.");
+  try{await importData(ctx,owner,msg.document);await send(ctx,owner,"✅ Копію імпортовано.");return menu(ctx,owner);}
+  catch(err){return send(ctx,owner,"❗ "+esc(err.message));}
+ }
+ if(cmd==="/start"||cmd==="/cancel"){await cancel(ctx,owner);return menu(ctx,owner);}
+ if(cmd==="/export")return action(ctx,owner,"export");
+ if(cmd==="/import")return action(ctx,owner,"import");
+ const c={"/agenda":"agenda","/today":"agenda","/osmosis":"osmosis","/filters":"filters","/tasks":"tasks","/shopping":"shopping","/expenses":"expenses","/stats":"stats","/family":"family","/settings":"other","/help":"other"};
+ if(c[cmd]){await cancel(ctx,owner);return menu(ctx,owner,c[cmd]);}
+ if(content.startsWith("/"))return send(ctx,owner,"Невідома команда. Введи /start.");
+ const sessionData=await first(e,"SELECT * FROM sessions WHERE uid=?",uid);
+ if(sessionData&&sessionData.kind!=="import")return wizard(ctx,owner,content,sessionData);
+ return menu(ctx,owner);
 }
 async function reminders(e,dt){
- if(hour(dt)!==9)return;const d=today(dt),items=await all(e,"SELECT * FROM items WHERE kind IN ('filters','tasks') AND done=0 AND due<=? LIMIT 1000",add(d,7));
- for(const x of items){const left=gap(d,x.due),phase=left===1?"early":left===0?"due":left<0&&-left%7===0?"late":null;if(!phase)continue;if(await first(e,"SELECT 1 ok FROM sent WHERE uid=? AND item_id=? AND due=? AND phase=?",x.uid,x.id,x.due,phase))continue;
-  try{await send(e,x.uid,"🔔 <b>"+(x.kind==="filters"?"Час замінити фільтр":"Домашня справа")+"</b>\n\n"+esc(x.title)+"\nДата: "+fmt(x.due)+"\n/start — відкрити меню.");await run(e,"INSERT OR IGNORE INTO sent(uid,item_id,due,phase) VALUES(?,?,?,?)",x.uid,x.id,x.due,phase);}catch(err){console.error("reminder",x.id,String(err));}
+ if(hour(dt)!==9)return;
+ const d=today(dt),entries=await all(e,"SELECT * FROM items WHERE kind IN ('filters','tasks') AND done=0 AND due<=? ORDER BY due LIMIT 1000",add(d,7));
+ for(const item of entries){
+  const normal=notificationPhase(item.due,d);
+  const family=await all(e,"SELECT uid FROM family_members WHERE owner_uid=?",item.uid);
+  const recipients=[item.uid,...family.map(x=>x.uid)];
+  for(const user of recipients){
+   try {
+    const pref=await notificationPrefs(e,user);
+    if(!pref.enabled)continue;
+    const snooze=await first(e,"SELECT until_date FROM snoozes WHERE uid=? AND item_id=?",user,item.id);
+    if(snooze&&snooze.until_date>d)continue;
+    const wasSnoozed=!!snooze&&snooze.until_date<=d;
+    const phase=wasSnoozed?"snooze":normal;
+    if(!phase||phase==="seven"&&!pref.warnings)continue;
+    if(await first(e,"SELECT 1 ok FROM sent WHERE uid=? AND item_id=? AND due=? AND phase=?",user,item.id,item.due,phase))continue;
+    const caption=item.kind==="filters"?"💧 Фільтр":"📋 Домашня справа";
+    const type=phase==="seven"?"За 7 днів":phase==="early"?"Завтра":phase==="due"?"Сьогодні":phase==="late"?"Прострочено":"Повторне нагадування";
+    const buttons=[[key(item.kind==="filters"?"✅ Замінено сьогодні":"✅ Виконано",item.kind==="filters"?"replacenow:"+item.id:"done:"+item.id),key("⏰ Завтра","snooze:"+item.id)],
+      [key("📅 План","menu:agenda")]];
+    await send(e,user,"🔔 <b>"+caption+": "+type+"</b>\n\n"+esc(item.title)+"\nТермін: "+fmt(item.due)+"\n"+replacementStatus(item.due,d),buttons);
+    await run(e,"INSERT OR IGNORE INTO sent(uid,item_id,due,phase) VALUES(?,?,?,?)",user,item.id,item.due,phase);
+    if(wasSnoozed)await run(e,"DELETE FROM snoozes WHERE uid=? AND item_id=?",user,item.id);
+   }catch(err){console.error("reminder",item.id,user,String(err));}
+  }
  }
 }
 export default {

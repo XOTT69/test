@@ -55,6 +55,13 @@ function intervalDisplay(item){
  const n=item.interval_value||item.days;
  return item.interval_unit==="months"&&item.interval_value>0?n+" міс. (календарний термін)":n+" днів";
 }
+function taskStatus(due,now=today()){
+ if(!due||!validDate(due))return "⚪ Дата не вказана";
+ const days=gap(now,due);
+ if(days<0)return "🔴 Прострочено на "+(-days)+" днів";
+ if(days===0)return "🔴 Зробити сьогодні";
+ return "🟠 До виконання "+calendarSpan(now,due)+" ("+days+" днів)";
+}
 function replacementStatus(due,now=today()){
  if(!due||!validDate(due))return "⚪ Дату заміни не вказано";
  const remaining=gap(now,due);
@@ -211,7 +218,7 @@ async function menu(e,u,kind="home"){
  if(!kinds[kind])return menu(e,u);
  const rows=await all(e,"SELECT * FROM items WHERE uid=? AND kind=? AND done=0 ORDER BY COALESCE(due,'9999-12-31'),id DESC LIMIT 15",u,kind);
  const desc=rows.map(x=>kind==="filters"?"• "+filterIcon(x.due)+" "+esc(x.title)+" — "+fmt(x.due)+"\n   "+replacementStatus(x.due):"• "+esc(x.title)+(x.due?" — "+fmt(x.due):"")+(kind==="expenses"?" · "+hryvnia(x.amount):"")+(kind==="shopping"&&x.notes?" · "+esc(x.notes):""));
- const opts=rows.map(x=>kind==="filters"?[key(filterIcon(x.due)+" "+x.title.slice(0,26),"filter:"+x.id)]:["tasks","shopping"].includes(kind)?[key("✅ "+x.title.slice(0,26),"done:"+x.id)]:[]).filter(r=>r.length);
+ const opts=rows.map(x=>kind==="filters"?[key(filterIcon(x.due)+" "+x.title.slice(0,26),"filter:"+x.id)]:kind==="tasks"?[key("📋 "+x.title.slice(0,26),"task:"+x.id)]:kind==="shopping"?[key("✅ "+x.title.slice(0,26),"done:"+x.id)]:[]).filter(r=>r.length);
  opts.push([key("➕ Додати","add:"+kind)]);opts.push(...toHome);
  return send(e,u,"<b>"+kinds[kind]+"</b>\n\n"+(desc.length?desc.join("\n"):"Наразі записів немає."),opts);
 }
@@ -232,7 +239,7 @@ async function taskDetail(e,u,id){
  const x=await first(e,"SELECT * FROM items WHERE uid=? AND kind='tasks' AND id=?",u,id);
  if(!x)return menu(e,u,"tasks");
  return send(e,u,"<b>📋 "+esc(x.title)+"</b>\n\nТермін: "+fmt(x.due)+
- "\n"+replacementStatus(x.due)+"\nПовтор: "+(x.days>0?"кожні "+x.days+" днів":"одноразова справа"),
+ "\n"+taskStatus(x.due)+"\nПовтор: "+(x.days>0?"кожні "+x.days+" днів":"одноразова справа"),
  [[key("✅ Виконано","done:"+id)],[key("✏️ Змінити назву","taskedit:"+id+":title"),key("📆 Змінити дату","taskedit:"+id+":due")],
   [key("🔁 Повторення","taskedit:"+id+":days"),key("🗑 Видалити","taskdelete:"+id)],[key("⬅️ До справ","menu:tasks")]]);
 }
@@ -658,7 +665,7 @@ async function reminders(e,dt){
     const type=phase==="seven"?"За 7 днів":phase==="early"?"Завтра":phase==="due"?"Сьогодні":phase==="late"?"Прострочено":"Повторне нагадування";
     const buttons=[[key(item.kind==="filters"?"✅ Замінено сьогодні":"✅ Виконано",item.kind==="filters"?"replacenow:"+item.id:"done:"+item.id),key("⏰ Завтра","snooze:"+item.id)],
       [key("📅 План","menu:agenda")]];
-    await send(e,user,"🔔 <b>"+caption+": "+type+"</b>\n\n"+esc(item.title)+"\nТермін: "+fmt(item.due)+"\n"+replacementStatus(item.due,d),buttons);
+    await send(e,user,"🔔 <b>"+caption+": "+type+"</b>\n\n"+esc(item.title)+"\nТермін: "+fmt(item.due)+"\n"+(item.kind==="filters"?replacementStatus(item.due,d):taskStatus(item.due,d)),buttons);
     await run(e,"INSERT OR IGNORE INTO sent(uid,item_id,due,phase) VALUES(?,?,?,?)",user,item.id,item.due,phase);
     if(wasSnoozed)await run(e,"DELETE FROM snoozes WHERE uid=? AND item_id=?",user,item.id);
    }catch(err){console.error("reminder",item.id,user,String(err));}
@@ -679,4 +686,4 @@ export default {
  async scheduled(event,e){if(e.DB&&e.BOT_TOKEN)await reminders(e,new Date(event.scheduledTime));}
 };
 
-export {addMonths,filterInterval,dueFor,intervalDisplay,replacementPlan,calendarParts,calendarSpan,replacementStatus,filterIcon};
+export {addMonths,filterInterval,dueFor,intervalDisplay,replacementPlan,calendarParts,calendarSpan,replacementStatus,filterIcon,notificationPhase,taskStatus};

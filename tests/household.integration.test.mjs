@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {DatabaseSync} from "node:sqlite";
-import {readFileSync} from "node:fs";
+import {readFileSync,readdirSync} from "node:fs";
 import bot, {notificationPhase,taskStatus} from "../src/index.js";
 
 function testDatabase(){
  const sqlite=new DatabaseSync(":memory:");
- for(const number of ["0001_init.sql","0002_osmosis_and_intervals.sql","0003_remove_tds.sql","0004_household_preferences.sql"]){
+ for(const number of readdirSync(new URL("../migrations/",import.meta.url)).filter(x=>x.endsWith(".sql")).sort()){
   sqlite.exec(readFileSync(new URL("../migrations/"+number,import.meta.url),"utf8"));
  }
  const wrap=(sql,args)=>({

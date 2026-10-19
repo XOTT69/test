@@ -5,7 +5,7 @@ const medicinePrompts=[
  "Форма та маркування на упаковці? (наприклад, таблетки 500 мг або -)",
  "Скільки одиниць зараз? Введіть ціле число 0–99999.",
  "В яких одиницях обліковуємо? (шт, табл, капс, мл, упаковок)",
- "Термін придатності: ДД.ММ.РРРР або - якщо невідомий?",
+ "Термін придатності: ДД.ММ.РРРР або ММ.РРРР (останній день місяця), чи - якщо невідомий?",
  "При якому залишку нагадувати про поповнення? 0 — вимкнути.",
  "Місце зберігання? (наприклад, шафа у ванній, або -)",
  "Примітка? (або - якщо немає)"
@@ -250,7 +250,7 @@ async function medicineMenu(e,u){
  "\n🟠 Придатність ≤30 днів: "+soon+"\n📉 Малий або нульовий запас: "+low+
  "\n\n"+(list.length?list.join("\n"):"Аптечка порожня. Додай перший препарат.")+
  (rows.length===40?"\nПоказано перші 40 позицій.":"")+
- "\n\n⚠️ Дані довідкові: перевіряй оригінальну упаковку. Не використовуй прострочені ліки. Список бачать усі запрошені члени сім’ї.",buttons);
+ "\n\n⚠️ Дані довідкові: перевіряй оригінальну упаковку. Не використовуй прострочені ліки. Кожне пакування з іншим терміном додавай окремо. Список бачать усі запрошені члени сім’ї.",buttons);
 }
 async function medicineArchive(e,u){
  const rows=await all(e,"SELECT id,name FROM medicine_items WHERE uid=? AND archived=1 ORDER BY id DESC LIMIT 30",u);
@@ -263,7 +263,7 @@ async function medicineDetail(e,u,id){
  const state=medicineState(m);
  const events=await all(e,"SELECT delta,kind,created_at FROM medicine_events WHERE uid=? AND medicine_id=? ORDER BY id DESC LIMIT 5",u,id);
  const history=events.map(x=>"• "+x.created_at.slice(0,10)+" · "+(x.delta>0?"+":"")+x.delta+" "+esc(m.unit)+" ("+(x.kind==="used"?"використано":x.kind==="stock"?"додано":x.kind==="discarded"?"списано":"коригування")+")").join("\n");
- const buttons=[[key("➖ Використано 1 "+m.unit.slice(0,12),"meduse:"+id),key("➕ Поповнити","medstock:"+id)],
+ const buttons=[[key("➖ Списати 1 "+m.unit.slice(0,12),"meduse:"+id),key("➕ Поповнити","medstock:"+id)],
  [key("✏️ Редагувати","mededit:"+id),key("🗑 До архіву","medarchive:"+id)],
  [key("⬅️ Аптечка","menu:medicines")]];
  return send(e,u,"<b>"+state.icon+" "+esc(m.name)+"</b>\n"+
@@ -289,6 +289,17 @@ async function medicineEditMenu(e,u,id){
  [key("📍 Місце","medfield:"+id+":location"),key("📝 Примітка","medfield:"+id+":notes")],
  [key("⬅️ Назад","med:"+id)]]);
 }
+function medicineExpiryDate(value){
+ const t=String(value||"").trim();
+ const complete=validDate(t);
+ if(complete)return complete;
+ const part=t.match(/^(\d{2})[./-](\d{4})$/);
+ if(!part)return null;
+ const month=Number(part[1]),year=Number(part[2]);
+ if(month<1||month>12||year<2000||year>2100)return null;
+ const last=new Date(Date.UTC(year,month,0)).getUTCDate();
+ return String(year)+"-"+String(month).padStart(2,"0")+"-"+String(last).padStart(2,"0");
+}
 function medicineEntry(text,field){
  const t=String(text||"").trim();
  if(["name","form","unit","location","notes"].includes(field)){
@@ -298,7 +309,7 @@ function medicineEntry(text,field){
  }
  if(field==="quantity")return number(t,0,99999);
  if(field==="low_at")return number(t,0,99999);
- if(field==="expires_at")return t==="-"?null:validDate(t);
+ if(field==="expires_at")return t==="-"?null:medicineExpiryDate(t);
  return null;
 }
 async function medicineSetQuantity(e,u,m,value,kind){
@@ -421,7 +432,7 @@ async function wizard(e,u,text,s){
   if(!field){await cancel(e,u);return medicineMenu(e,u);}
   const value=medicineEntry(text,field);
   if(value===null&&!(field==="expires_at"&&text.trim()==="-"))
-   return send(e,u,"❗ Перевір значення. Для дати введи ДД.ММ.РРРР або -, для кількості — ціле невід’ємне число.");
+   return send(e,u,"❗ Перевір значення. Для дати введи ДД.ММ.РРРР, ММ.РРРР або -, для кількості — ціле невід’ємне число.");
   p[field]=value;
   if(s.step+1<medicinePrompts.length){
    await session(e,u,"mednew",s.step+1,p);
@@ -441,7 +452,7 @@ async function wizard(e,u,text,s){
   if(!current){await cancel(e,u);return medicineMenu(e,u);}
   const value=medicineEntry(text,field);
   if(value===null&&!(field==="expires_at"&&text.trim()==="-"))
-   return send(e,u,"❗ Неправильне значення. Для очищення дати або примітки введи -.");
+   return send(e,u,"❗ Неправильне значення. Для очищення дати або примітки введи -. Можна вказати ММ.РРРР.");
   await cancel(e,u);
   if(field==="quantity")return medicineSetQuantity(e,u,current,value,"adjust");
   await run(e,"UPDATE medicine_items SET "+field+"=?,updated_at=CURRENT_TIMESTAMP WHERE uid=? AND id=?",value,u,id);
@@ -660,7 +671,7 @@ async function action(e,u,data){
   const id=+medField[1],field=medField[2];
   if(!await first(e,"SELECT id FROM medicine_items WHERE uid=? AND id=? AND archived=0",u,id))return medicineMenu(e,u);
   await session(e,u,"mededit:"+id+":"+field);
-  const prompts={name:"Нова назва препарату?",form:"Форма й маркування (або -)?",quantity:"Новий точний залишок (0–99999)?",unit:"Одиниця обліку (табл, мл, шт тощо)?",expires_at:"Кінцевий термін придатності ДД.ММ.РРРР або -?",low_at:"Нагадувати при залишку ≤ скількох одиниць? (0 — без попереджень)",location:"Нове місце зберігання (або -)?",notes:"Примітка (або -)?"};
+  const prompts={name:"Нова назва препарату?",form:"Форма й маркування (або -)?",quantity:"Новий точний залишок (0–99999)?",unit:"Одиниця обліку (табл, мл, шт тощо)?",expires_at:"Термін придатності: ДД.ММ.РРРР або ММ.РРРР (останній день місяця), чи -?",low_at:"Нагадувати при залишку ≤ скількох одиниць? (0 — без попереджень)",location:"Нове місце зберігання (або -)?",notes:"Примітка (або -)?"};
   return send(e,u,prompts[field]+"\n/cancel — скасувати");
  }
  const medUse=data.match(/^meduse:(\d+)$/);
@@ -953,4 +964,4 @@ export default {
  async scheduled(event,e){if(e.DB&&e.BOT_TOKEN)await reminders(e,new Date(event.scheduledTime));}
 };
 
-export {addMonths,filterInterval,dueFor,intervalDisplay,replacementPlan,calendarParts,calendarSpan,replacementStatus,filterIcon,notificationPhase,taskStatus,medicineState,medicineExpiryPhase,medicineEntry};
+export {addMonths,filterInterval,dueFor,intervalDisplay,replacementPlan,calendarParts,calendarSpan,replacementStatus,filterIcon,notificationPhase,taskStatus,medicineState,medicineExpiryPhase,medicineEntry,medicineExpiryDate};

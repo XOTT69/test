@@ -79,7 +79,7 @@ test("family invite is one-time, shared ownership is isolated, tasks and setting
  const invite=messageFor(101).match(/start=join_([a-f0-9]{36})/);
  assert.ok(invite,"owner receives one-time invite");
  await event(202,"/start join_"+invite[1]);
- assert.match(messageFor(202),/приєднався/);
+ assert.ok(out.some(m=>m.chat_id===202 && /приєднався/.test(m.text)),"join welcome message is sent");
  assert.equal(db.sqlite.prepare("SELECT owner_uid FROM family_members WHERE uid=202").get().owner_uid,101);
  await event(303,"/start join_"+invite[1]);
  assert.match(messageFor(303),/недійсне/);

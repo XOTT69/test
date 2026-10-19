@@ -1,7 +1,7 @@
-const kinds={osmosis:"🚰 Мій осмос",filters:"💧 Фільтри",tasks:"📋 Справи",shopping:"🛒 Покупки",expenses:"💸 Витрати"};
+const kinds={agenda:"📅 План на тиждень",osmosis:"🚰 Мій осмос",filters:"💧 Фільтри",tasks:"📋 Справи",shopping:"🛒 Покупки",expenses:"💸 Витрати",stats:"📊 Статистика",family:"👨‍👩‍👧 Сім’я"};
 const prompts={osmosis:["Як називається твоя система зворотного осмосу?","Марка та модель осмосу (або - якщо невідомо)?"],filters:["Назва фільтра?","Дата останньої заміни: ДД.ММ.РРРР або сьогодні?","Інтервал: 90 днів, 6 місяців або кінцева дата 31.12.2027?"],tasks:["Назва справи?","Коли виконати: ДД.ММ.РРРР або сьогодні?","Повторювати через скільки днів? (0 — не повторювати)"],shopping:["Що потрібно купити?","Кількість або примітка?"],expenses:["За що витрати?","Сума в гривнях?"]};
 const key=(text,callback_data)=>({text,callback_data});
-const kb=[["osmosis","filters"],["tasks","shopping"],["expenses","other"]].map(r=>r.map(x=>key(kinds[x]||"⚙️ Інше","menu:"+x)));
+const kb=[["agenda","osmosis"],["filters","tasks"],["shopping","expenses"],["stats","family"],["other"]].map(r=>r.map(x=>key(kinds[x]||"⚙️ Інше","menu:"+x)));
 const toHome=[[key("🏠 Головне меню","menu:home")]];
 const intervalButtons=[[key("📆 Дні","period:days"),key("🗓 Місяці","period:months"),key("🎯 Кінцева дата","period:date")]];
 function periodPrompt(mode){
@@ -81,9 +81,115 @@ const first=(e,sql,...a)=>query(e,sql,...a).first();
 const all=async(e,sql,...a)=>(await query(e,sql,...a).all()).results||[];
 const run=(e,sql,...a)=>query(e,sql,...a).run();
 async function tg(e,method,body){const r=await fetch("https://api.telegram.org/bot"+e.BOT_TOKEN+"/"+method,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});const j=await r.json();if(!r.ok||!j.ok)throw Error(j.description||"Telegram error");return j.result;}
-const send=(e,u,s,keys)=>tg(e,"sendMessage",{chat_id:u,text:s,parse_mode:"HTML",reply_markup:keys?{inline_keyboard:keys}:undefined});
-async function session(e,u,kind,step=0,obj={}){await run(e,"INSERT INTO sessions(uid,kind,step,json) VALUES(?,?,?,?) ON CONFLICT(uid) DO UPDATE SET kind=excluded.kind,step=excluded.step,json=excluded.json",u,kind,step,JSON.stringify(obj));}
-const cancel=(e,u)=>run(e,"DELETE FROM sessions WHERE uid=?",u);
+const actor=(e,u)=>e.ACTOR_UID??u;
+const send=(e,u,s,keys)=>tg(e,"sendMessage",{chat_id:actor(e,u),text:s,parse_mode:"HTML",reply_markup:keys?{inline_keyboard:keys}:undefined});
+async function session(e,u,kind,step=0,obj={}){await run(e,"INSERT INTO sessions(uid,kind,step,json) VALUES(?,?,?,?) ON CONFLICT(uid) DO UPDATE SET kind=excluded.kind,step=excluded.step,json=excluded.json",actor(e,u),kind,step,JSON.stringify(obj));}
+const cancel=(e,u)=>run(e,"DELETE FROM sessions WHERE uid=?",actor(e,u));
+
+async function agenda(e,u){
+ const d=today(),until=add(d,7);
+ const rows=await all(e,"SELECT id,kind,title,due FROM items WHERE uid=? AND done=0 AND kind IN ('filters','tasks') AND due<=? ORDER BY due,id LIMIT 35",u,until);
+ const overdue=rows.filter(x=>x.due<=d),upcoming=rows.filter(x=>x.due>d);
+ const line=x=>(x.due<d?"🔴":x.due===d?"🚨":"🟠")+" "+esc(x.title)+" — "+fmt(x.due)+(x.kind==="filters"?" 💧":" 📋");
+ const buttons=rows.slice(0,12).map(x=>[key((x.kind==="filters"?"💧 ":"✅ ")+x.title.slice(0,34),x.kind==="filters"?"filter:"+x.id:"task:"+x.id)]);
+ buttons.push([key("📋 Додати справу","add:tasks"),key("💧 Додати фільтр","add:filters")],...toHome);
+ return send(e,u,"<b>📅 План на найближчі 7 днів</b>\n\n<b>Сьогодні та прострочено ("+overdue.length+"):</b>\n"+
+ (overdue.length?overdue.map(line).join("\n"):"Немає.")+
+ "\n\n<b>Незабаром ("+upcoming.length+"):</b>\n"+(upcoming.length?upcoming.map(line).join("\n"):"Немає.")+
+ (rows.length===35?"\n\nПоказано перші 35 записів.":""),
+ buttons);
+}
+async function statistics(e,u){
+ const now=today(),month=now.slice(0,7)+"-01",year=now.slice(0,4)+"-01-01";
+ const [total,recent,allExp,monthExp,yearExp,pending,done,upcoming,perFilter]=await Promise.all([
+  first(e,"SELECT COUNT(*) n,COALESCE(SUM(amount),0) cost FROM history WHERE uid=?",u),
+  first(e,"SELECT COUNT(*) n,COALESCE(SUM(amount),0) cost FROM history WHERE uid=? AND changed>=?",u,add(now,-30)),
+  first(e,"SELECT COUNT(*) n,COALESCE(SUM(amount),0) cost FROM items WHERE uid=? AND kind='expenses'",u),
+  first(e,"SELECT COUNT(*) n,COALESCE(SUM(amount),0) cost FROM items WHERE uid=? AND kind='expenses' AND changed>=?",u,month),
+  first(e,"SELECT COUNT(*) n,COALESCE(SUM(amount),0) cost FROM items WHERE uid=? AND kind='expenses' AND changed>=?",u,year),
+  first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='tasks' AND done=0",u),
+  first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='tasks' AND done=1",u),
+  first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='filters' AND done=0 AND due<=?",u,add(now,7)),
+  all(e,"SELECT i.title,COUNT(*) n FROM history h JOIN items i ON i.id=h.item_id AND i.uid=h.uid WHERE h.uid=? GROUP BY i.id ORDER BY n DESC LIMIT 5",u)
+ ]);
+ const lines=perFilter.map(x=>"• "+esc(x.title)+": "+x.n+" замін").join("\n");
+ return send(e,u,"<b>📊 Статистика всієї оселі</b>\n\n<b>💸 Витрати</b>\nЦього місяця: "+hryvnia(monthExp.cost)+
+ "\nЦього року: "+hryvnia(yearExp.cost)+"\nЗа весь час: "+hryvnia(allExp.cost)+
+ "\n\n<b>💧 Обслуговування</b>\nВсього замін: "+total.n+"\nЗа останні 30 днів: "+recent.n+
+ "\nПотребують уваги за 7 днів: "+upcoming.n+
+ "\n"+(lines||"Заміни ще не записувалися.")+
+ "\n\n<b>📋 Домашні справи</b>\nАктивних: "+pending.n+"\nЗавершених: "+done.n,
+ [[key("📅 План на тиждень","menu:agenda")],...toHome]);
+}
+function notificationPhase(due,d){
+ const delta=gap(d,due);
+ if(delta===7)return "seven";
+ if(delta===1)return "early";
+ if(delta===0)return "due";
+ if(delta<0&&(-delta)%3===0)return "late";
+ return null;
+}
+async function notificationPrefs(e,uid){
+ const x=await first(e,"SELECT enabled,warnings FROM notification_settings WHERE uid=?",uid);
+ return {enabled:x?.enabled!==0,warnings:x?.warnings!==0};
+}
+async function notificationsMenu(e,u){
+ const pref=await notificationPrefs(e,actor(e,u));
+ return send(e,u,"<b>🔔 Нагадування</b>\n\n"+(pref.enabled?"✅ Увімкнені":"🔕 Вимкнені")+
+ "\nПопередження за 7 днів: "+(pref.warnings?"так":"ні")+
+ "\n\nЧас: 09:00 за Києвом. Налаштування особисті для кожного учасника сім’ї.",
+ [[key(pref.enabled?"🔕 Вимкнути все":"🔔 Увімкнути все","notify:enabled")],[key(pref.warnings?"🔕 Без попереджень за 7 днів":"🔔 Попереджати за 7 днів","notify:warnings")],...toHome]);
+}
+async function familyMenu(e,u){
+ const viewer=actor(e,u),isOwner=viewer===u;
+ const members=await all(e,"SELECT m.uid,COALESCE(users.name,'') name FROM family_members m LEFT JOIN users ON users.id=m.uid WHERE m.owner_uid=? ORDER BY m.joined_at",u);
+ const current=await first(e,"SELECT name FROM users WHERE id=?",u);
+ const names=["👑 "+esc(current?.name||"Власник"),...members.map(x=>"👤 "+esc(x.name||String(x.uid)))];
+ const buttons=[];
+ if(isOwner){
+  buttons.push([key("🔗 Запросити члена сім’ї","family:invite")]);
+  for(const m of members)buttons.push([key("🚫 Відключити "+(m.name||String(m.uid)).slice(0,22),"familyremove:"+m.uid)]);
+ }else buttons.push([key("🚪 Вийти зі спільної оселі","family:leave")]);
+ buttons.push(...toHome);
+ return send(e,u,"<b>👨‍👩‍👧 Наша оселя</b>\n\nСпільні фільтри, осмос, покупки, витрати, справи та історія.\n"+
+ "Нагадування кожен налаштовує окремо.\n\n"+names.join("\n")+
+ "\n\n"+(isOwner?"Лише власник може запросити або відключити учасників.":"Доступ надав власник оселі."),
+ buttons);
+}
+function invitationCode(){
+ const bytes=new Uint8Array(18);crypto.getRandomValues(bytes);
+ return Array.from(bytes,b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function inviteHash(code){
+ const data=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(code));
+ return Array.from(new Uint8Array(data),b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function issueInvitation(e,u){
+ if(actor(e,u)!==u)return send(e,u,"Лише власник оселі може запросити учасника.");
+ const members=await first(e,"SELECT COUNT(*) n FROM family_members WHERE owner_uid=?",u);
+ if(members.n>=5)return send(e,u,"Максимум 5 запрошених учасників.");
+ const code=invitationCode(),hash=await inviteHash(code),me=await tg(e,"getMe",{});
+ if(!/^[A-Za-z0-9_]{5,32}$/.test(me.username||""))throw Error("Telegram bot username unavailable");
+ const expires=Math.floor(Date.now()/1000)+86400;
+ await run(e,"INSERT INTO family_invites(token_hash,owner_uid,expires_at) VALUES(?,?,?)",hash,u,expires);
+ const link="https://t.me/"+me.username+"?start=join_"+code;
+ return send(e,u,"🔐 <b>Одноразове сімейне запрошення</b>\n\n"+link+
+ "\n\nДіє 24 години та лише для одного учасника. Надішли посилання потрібній людині приватно. Вона натисне Start і отримає доступ до спільної оселі.");
+}
+async function redeemInvitation(e,uid,code){
+ if(!/^[a-f0-9]{36}$/.test(code))return false;
+ const already=await first(e,"SELECT owner_uid FROM family_members WHERE uid=?",uid);
+ if(already)return false;
+ const hasData=await first(e,"SELECT (SELECT COUNT(*) FROM items WHERE uid=?)+(SELECT COUNT(*) FROM osmosis_systems WHERE uid=?) n",uid,uid);
+ if(hasData?.n)return false; // Never strand private records by making their owner inaccessible.
+ const hash=await inviteHash(code),invite=await first(e,"SELECT owner_uid FROM family_invites WHERE token_hash=? AND used_by IS NULL AND expires_at>?",hash,Math.floor(Date.now()/1000));
+ if(!invite||invite.owner_uid===uid)return false;
+ const used=await run(e,"UPDATE family_invites SET used_by=?,used_at=? WHERE token_hash=? AND used_by IS NULL AND expires_at>? AND owner_uid!=(?) AND (SELECT COUNT(*) FROM family_members WHERE owner_uid=?)<5",uid,Math.floor(Date.now()/1000),hash,Math.floor(Date.now()/1000),uid,invite.owner_uid);
+ if(!used?.meta?.changes)return false;
+ await run(e,"INSERT OR IGNORE INTO family_members(uid,owner_uid) SELECT ?,owner_uid FROM family_invites WHERE token_hash=? AND used_by=?",uid,hash,uid);
+ return true;
+}
+
 async function menu(e,u,kind="home"){
  if(kind==="home"){
   const overdue=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='filters' AND done=0 AND due<=?",u,today());
@@ -92,13 +198,16 @@ async function menu(e,u,kind="home"){
   const shopping=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='shopping' AND done=0",u);
   return send(e,u,"<b>🏠 Оселя</b>\n\n🔴 Фільтрів замінити зараз: "+overdue.n+"\n🟠 Фільтрів замінити протягом 7 днів: "+soon.n+"\n📋 Справ на 7 днів: "+tasks.n+"\n🛒 Покупок: "+shopping.n+"\n\nОберіть розділ:",kb);
  }
+ if(kind==="agenda")return agenda(e,u);
+ if(kind==="stats")return statistics(e,u);
+ if(kind==="family")return familyMenu(e,u);
  if(kind==="osmosis"){
   const systems=await all(e,"SELECT * FROM osmosis_systems WHERE uid=? ORDER BY id DESC LIMIT 30",u);
   const buttons=systems.map(x=>[key("🚰 "+x.title.slice(0,43),"system:"+x.id)]);
   buttons.push([key("➕ Додати осмос","add:osmosis")],...toHome);
   return send(e,u,"<b>🚰 Мій осмос</b>\n\n"+(systems.length?"Обери систему, щоб переглянути картриджі й терміни їх заміни.":"Додай свій осмос. Для нього можна вести окремі картриджі й графік їх замін.")+"\n",buttons);
  }
- if(kind==="other")return send(e,u,"<b>⚙️ Додатково</b>\n\n/export — резервна копія JSON\n/import — імпорт у порожній профіль\n/cancel — скасувати\n/start — меню\n\nІмпорт старого вебсайту поки не підтримується.",[[key("📤 Експорт","export"),key("📥 Імпорт","import")],...toHome]);
+ if(kind==="other")return send(e,u,"<b>⚙️ Налаштування</b>\n\nНагадування надходять о 09:00 за Києвом.\n/export — резервна копія JSON\n/import — імпорт у порожній профіль (лише власник)\n/cancel — скасувати",[[key("🔔 Налаштування нагадувань","notifications")],[key("📤 Експорт","export"),key("📥 Імпорт","import")],...toHome]);
  if(!kinds[kind])return menu(e,u);
  const rows=await all(e,"SELECT * FROM items WHERE uid=? AND kind=? AND done=0 ORDER BY COALESCE(due,'9999-12-31'),id DESC LIMIT 15",u,kind);
  const desc=rows.map(x=>kind==="filters"?"• "+filterIcon(x.due)+" "+esc(x.title)+" — "+fmt(x.due)+"\n   "+replacementStatus(x.due):"• "+esc(x.title)+(x.due?" — "+fmt(x.due):"")+(kind==="expenses"?" · "+hryvnia(x.amount):"")+(kind==="shopping"&&x.notes?" · "+esc(x.notes):""));
@@ -113,9 +222,10 @@ async function systemDetail(e,u,id){
  const desc=filters.length?filters.map(z=>"• "+filterIcon(z.due)+" "+esc(z.title)+" — "+fmt(z.due)+"\n   "+replacementStatus(z.due)).join("\n"):"Фільтри поки не додані.";
  const buttons=filters.map(z=>[key(filterIcon(z.due)+" "+z.title.slice(0,35),"filter:"+z.id)]);
  buttons.push([key("➕ Додати фільтр","add:filters:"+id)]);
+ buttons.push([key("✏️ Редагувати осмос","sysedit:"+id)]);
  buttons.push([key("🔗 Прив'язати наявні фільтри","attach:"+id)]);
  buttons.push([key("⬅️ Мої осмоси","menu:osmosis")]);
- return send(e,u,"<b>🚰 "+esc(x.title)+"</b>\n"+(x.model?"Модель: "+esc(x.model)+"\n":"")+"\n<b>Картриджі:</b>\n"+desc,buttons);
+ return send(e,u,"<b>🚰 "+esc(x.title)+"</b>\n"+(x.model?"Модель: "+esc(x.model)+"\n":"Модель: не вказана\n")+(x.installed_at?"Встановлено: "+fmt(x.installed_at)+"\n":"Дата встановлення: не вказана\n")+"\n<b>Картриджі:</b>\n"+desc,buttons);
 }
 async function attachFilters(e,u,id){
  const device=await first(e,"SELECT id FROM osmosis_systems WHERE uid=? AND id=?",u,id);

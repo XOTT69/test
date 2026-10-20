@@ -52,7 +52,7 @@ test("Mini App mounts live bootstrap and switches every screen",async()=>{
  vm.runInNewContext(scripts[0],context,{timeout:3000});
  await new Promise(resolve=>setTimeout(resolve,100));
  assert.ok(apiCalls>0);
- assert.match(elems.app.innerHTML,/Картридж тест/);
+ assert.match(elems.app.innerHTML,/Прибрати кухню/);
  assert.match(elems.app.innerHTML,/Оселя/);
  const select=act=>{
   const btn={dataset:{act},classList:{contains(){return false}},closest(){return null},type:"button"};
@@ -60,7 +60,7 @@ test("Mini App mounts live bootstrap and switches every screen",async()=>{
   listeners.click(ev);
  };
  for(const [page,specific] of [
-  ["osmosis","Домашній осмос"],
+  ["osmosis","Картридж тест"],
   ["medicines","Тестовий препарат"],
   ["tasks","Прибрати кухню"],
   ["shopping","Молоко"],

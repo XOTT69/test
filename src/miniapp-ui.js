@@ -61,7 +61,7 @@ function timeLeft(d){if(!d)return "Дата не вказана";var now=state.d
 function status(d,threshold){if(!d)return "neutral";var dif=dayDiff(state.data.today,d);return dif<=0?"red":dif<=(threshold||7)?"warn":"green"}
 function medicineStatus(m){var d=dayDiff(state.data.today,m.expires_at||"9999-12-31");return m.quantity===0||d<=0?"red":d<=30||(m.low_at>0&&m.quantity<=m.low_at)?"warn":"green"}
 function badge(color,label){return '<span class="pill '+(color==="green"?"green":color==="warn"?"warn":color==="red"?"red":"")+'">'+h(label)+'</span>'}
-function button(text,act,cl){return '<button class="btn '+(cl||"")+'" data-act="'+h(act)+'">'+text+'</button>'}
+function button(text,act,cl){return '<button type="button" class="btn '+(cl||"")+'" data-act="'+h(act)+'">'+text+'</button>'}
 function pageTitle(title,desc){return '<div class="screen-header"><h1>'+title+'</h1><p>'+desc+'</p></div>'}
 function blockTitle(text,right){return '<div class="section-title">'+text+(right||"")+'</div>'}
 function item(icon,title,subtitle,act,right){return '<div class="item actionable" data-act="'+h(act)+'"><div class="item-icon">'+icon+'</div><div class="item-content"><h3>'+h(title)+'</h3><p>'+subtitle+'</p></div>'+(right||'<span class="chevron">›</span>')+'</div>'}

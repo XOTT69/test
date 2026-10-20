@@ -14,3 +14,12 @@ jobs:
           node-version: '22'
       - run: npm install
       - run: npm test
+      - name: Browser layout tests (320–540px)
+        run: |
+          npm install --no-save --no-audit --no-fund playwright-core@1.56.1
+          CHROME_PATH="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
+          if [ -z "$CHROME_PATH" ]; then
+            echo "::error::Chrome not installed on GitHub runner"
+            exit 1
+          fi
+          CHROME_PATH="$CHROME_PATH" node tests/miniapp-viewport.browser.mjs

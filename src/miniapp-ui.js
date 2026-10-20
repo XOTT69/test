@@ -239,7 +239,7 @@ async function click(act){if(!act||act==="noop")return;
  if(type==="edit"){var arr={system:"systems",filter:"filters",medicine:"medicines",task:"tasks",shopping:"shopping"}[key];var x=state.data[arr]&&state.data[arr].find(v=>v.id===id);if(x){if(key==="system")newSystem(x);if(key==="filter")newFilter(x);if(key==="medicine")newMedicine(x);if(key==="task")newTask(x);if(key==="shopping")newShopping(x)}return}
  if(type==="replace"){var f=state.data.filters.find(x=>x.id===Number(key));if(f)replaceFilter(f);return}
  if(type==="delete"&&key==="filter"){confirmAsk("Видалити картридж та історію його замін?",async()=>{if(await change({type:"filter.delete",id})){close();notice("Фільтр видалено")}});return}
- if(type==="meddelta"){var delta=Number(a[3]);if(delta<0){confirmAsk("Списати одну одиницю препарату з домашнього запасу?",async()=>{if(await change({type:"medicine.stock",id,delta})){close();notice("Кількість оновлена")}})}else if(await change({type:"medicine.stock",id,delta})){close();notice("Запас поповнено")}return}
+ if(type==="meddelta"){var mid=Number(a[1]),delta=Number(a[2]);if(delta<0){confirmAsk("Списати одну одиницю препарату з домашнього запасу?",async()=>{if(await change({type:"medicine.stock",id:mid,delta})){close();notice("Кількість оновлена")}})}else if(await change({type:"medicine.stock",id:mid,delta})){close();notice("Запас поповнено")}return}
  if(type==="archive"&&key==="medicine"){confirmAsk("Перемістити препарат до архіву?",async()=>{if(await change({type:"medicine.archive",id,archived:true})){close();notice("Запис архівовано")}});return}
  if(type==="done"&&key==="task"){if(await change({type:"task.done",id})){close();notice("✅ Виконано")};return}
  if(type==="shoppingdone"){var x=state.data.shopping.find(y=>y.id===Number(key));if(x)change({type:"shopping.done",id:x.id,done:!x.done});return}
@@ -249,7 +249,7 @@ async function click(act){if(!act||act==="noop")return;
  if(type==="removefamily"){confirmAsk("Відключити учасника від спільної оселі?",async()=>{if(await change({type:"family.remove",uid:Number(key)}))notice("Доступ відкликано")});return}
  if(act==="familyleave"){confirmAsk("Вийти зі спільної оселі?",async()=>{if(await change({type:"family.leave"})){state.data=null;refresh()}});return}
 }
-document.addEventListener("click",function(e){var button=e.target.closest("[data-act]");if(!button)return;if(e.target===modal.firstElementChild&&button.dataset.act==="close"){close();return}
+document.addEventListener("click",function(e){var button=e.target.closest("[data-act]");if(!button)return;if(button.classList.contains("overlay")&&e.target!==button)return;if(e.target===modal.firstElementChild&&button.dataset.act==="close"){close();return}
 if(button.closest("form")&&button.type==="submit")return;e.preventDefault();click(button.dataset.act)});
 if(!initData){app.innerHTML='<div class="loading"><div style="font-size:64px">🏡</div><div class="brandname">Оселя</div><p>Цей застосунок відкривається через Telegram.</p><p class="small">Перейди у свого Telegram-бота та натисни кнопку «Оселя» в меню.</p></div>'}else refresh();
 })();

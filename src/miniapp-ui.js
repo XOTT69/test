@@ -95,7 +95,7 @@ var filters=state.data.filters.filter(f=>f.osmosis_id===id);
 return '<div class="row"><button class="btn ghost sm" data-act="system:back">‹ Усі системи</button>'+button("✏️ Змінити","edit:system:"+id,"sm")+'</div><div class="card system-card" style="margin-top:14px"><h3>'+h(x.title)+'</h3><div class="details">⚙ '+h(x.model||"Модель не вказана")+'<br>📅 '+(x.installed_at?fmt(x.installed_at):"Дата встановлення невідома")+'</div></div>'+
 blockTitle("Картриджі",button("＋ Додати","new:filter:"+id,"sm"))+
 (filters.length?filters.map(filterCard).join(""):empty("💧","Поки без картриджів","Додай фільтр до цієї системи.","Додати фільтр","new:filter:"+id))}
-function medicines(){var d=state.data,list=d.medicines.filter(m=>!m.archived),term=state.search.trim().toLocaleLowerCase("uk-UA");
+function medicines(){var d=state.data,list=d.medicines.filter(m=>state.medicineFilter==="archived"?m.archived:!m.archived),term=state.search.trim().toLocaleLowerCase("uk-UA");
 if(term)list=list.filter(m=>(m.name+" "+m.form+" "+m.location).toLocaleLowerCase("uk-UA").includes(term));
 if(state.medicineFilter==="soon")list=list.filter(m=>m.expires_at&&dayDiff(d.today,m.expires_at)<=30);
 if(state.medicineFilter==="low")list=list.filter(m=>m.quantity===0||m.low_at>0&&m.quantity<=m.low_at);
@@ -103,9 +103,9 @@ var low=d.medicines.filter(m=>!m.archived&&(m.quantity===0||m.low_at>0&&m.quanti
 return pageTitle("Аптечка","Здоров’я близьких під контролем")+
 '<div class="summary-strip"><div><strong>'+d.medicines.filter(x=>!x.archived).length+'</strong><span>Препаратів</span></div><div><strong>'+d.medicines.filter(x=>!x.archived&&x.expires_at&&dayDiff(d.today,x.expires_at)<=30).length+'</strong><span>Строк завершується</span></div><div><strong>'+low+'</strong><span>Малий запас</span></div></div>'+
 '<input id="medsearch" class="input-search" placeholder="🔍 Пошук ліків, форми, місця..." value="'+h(state.search)+'" autocomplete="off" />'+
-'<div class="tabs">'+[["all","Усі"],["soon","Скоро"],["low","Мало"]].map(x=>'<button data-act="medfilter:'+x[0]+'" class="'+(state.medicineFilter===x[0]?"active":"")+'">'+x[1]+'</button>').join("")+'</div>'+
+'<div class="tabs">'+[["all","Усі"],["soon","Скоро"],["low","Мало"],["archived","Архів"]].map(x=>'<button data-act="medfilter:'+x[0]+'" class="'+(state.medicineFilter===x[0]?"active":"")+'">'+x[1]+'</button>').join("")+'</div>'+
 button("＋ Додати препарат","new:medicine","full primary")+'<div style="height:13px"></div>'+
-(list.length?list.map(m=>item("💊",m.name,h(m.form||"Препарат")+" · "+m.quantity+" "+h(m.unit)+" · "+(m.expires_at?"до "+fmt(m.expires_at):"термін невідомий"),"open:medicine:"+m.id,badge(medicineStatus(m),medicineStatus(m)==="red"?"Увага":medicineStatus(m)==="warn"?"Скоро":"В нормі"))).join(""):empty("🧰","Нічого не знайдено",term?"Спробуй інший запит.":"Додай перший препарат.","Додати","new:medicine"))}
+(list.length?list.map(m=>item("💊",m.name,h(m.form||"Препарат")+" · "+m.quantity+" "+h(m.unit)+" · "+(m.expires_at?"до "+fmt(m.expires_at):"термін невідомий"),m.archived?"restore:medicine:"+m.id:"open:medicine:"+m.id,m.archived?badge("neutral","Відновити"):badge(medicineStatus(m),medicineStatus(m)==="red"?"Увага":medicineStatus(m)==="warn"?"Скоро":"В нормі"))).join(""):empty("🧰","Нічого не знайдено",term?"Спробуй інший запит.":"Додай перший препарат.","Додати","new:medicine"))}
 function tasks(){var d=state.data,list=d.tasks.filter(x=>state.taskFilter==="done"?x.done:state.taskFilter==="week"?!x.done&&dayDiff(d.today,x.due)<=7:!x.done);
 return pageTitle("Домашні справи","Усі важливі плани під рукою")+
 '<div class="tabs">'+[["active","Активні"],["week","На 7 днів"],["done","Завершені"]].map(x=>'<button class="'+(state.taskFilter===x[0]?"active":"")+'" data-act="taskfilter:'+x[0]+'">'+x[1]+'</button>').join("")+'</div>'+
@@ -150,7 +150,7 @@ function render(){
  var html=header(),content=state.page==="home"?home():state.page==="osmosis"?(state.selectedSystem?systemDetail(state.selectedSystem):systems()):state.page==="medicines"?medicines():state.page==="tasks"?tasks():state.page==="shopping"?shopping():state.page==="expenses"?expenses():state.page==="stats"?stats():state.page==="family"?family():state.page==="settings"?settings():more();
  html+='<main class="content">'+content+'</main>'+fab()+navigation();
  app.innerHTML=html;
- var search=document.getElementById("medsearch");if(search){search.addEventListener("input",function(e){var pos=this.selectionStart;state.search=this.value;var list=state.data.medicines.filter(m=>!m.archived);var term=state.search.trim().toLocaleLowerCase("uk-UA");if(term)list=list.filter(m=>(m.name+" "+m.form+" "+m.location).toLocaleLowerCase("uk-UA").includes(term));
+ var search=document.getElementById("medsearch");if(search){search.addEventListener("input",function(e){var pos=this.selectionStart;state.search=this.value;var list=state.data.medicines.filter(m=>state.medicineFilter==="archived"?m.archived:!m.archived);var term=state.search.trim().toLocaleLowerCase("uk-UA");if(term)list=list.filter(m=>(m.name+" "+m.form+" "+m.location).toLocaleLowerCase("uk-UA").includes(term));
   if(state.medicineFilter==="soon")list=list.filter(m=>m.expires_at&&dayDiff(state.data.today,m.expires_at)<=30);
   if(state.medicineFilter==="low")list=list.filter(m=>m.quantity===0||m.low_at>0&&m.quantity<=m.low_at);
   var section=this.parentElement;var children=section.querySelectorAll('.item');children.forEach(x=>x.remove());
@@ -241,6 +241,7 @@ async function click(act){if(!act||act==="noop")return;
  if(type==="delete"&&key==="filter"){confirmAsk("Видалити картридж та історію його замін?",async()=>{if(await change({type:"filter.delete",id})){close();notice("Фільтр видалено")}});return}
  if(type==="meddelta"){var mid=Number(a[1]),delta=Number(a[2]);if(delta<0){confirmAsk("Списати одну одиницю препарату з домашнього запасу?",async()=>{if(await change({type:"medicine.stock",id:mid,delta})){close();notice("Кількість оновлена")}})}else if(await change({type:"medicine.stock",id:mid,delta})){close();notice("Запас поповнено")}return}
  if(type==="archive"&&key==="medicine"){confirmAsk("Перемістити препарат до архіву?",async()=>{if(await change({type:"medicine.archive",id,archived:true})){close();notice("Запис архівовано")}});return}
+ if(type==="restore"&&key==="medicine"){confirmAsk("Повернути препарат з архіву?",async()=>{if(await change({type:"medicine.archive",id,archived:false})){close();notice("Препарат відновлено")}});return}
  if(type==="done"&&key==="task"){if(await change({type:"task.done",id})){close();notice("✅ Виконано")};return}
  if(type==="shoppingdone"){var x=state.data.shopping.find(y=>y.id===Number(key));if(x)change({type:"shopping.done",id:x.id,done:!x.done});return}
  if(type==="toggle"){var settings={...state.data.settings};settings[key]=!settings[key];if(await change({type:"settings.save",...settings}))notice("Налаштування збережено");return}

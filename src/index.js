@@ -1,3 +1,5 @@
+import {miniAppHtml} from "./miniapp-ui.js";
+import {handleMiniAppApi} from "./miniapp-api.js";
 const kinds={agenda:"📅 План на тиждень",osmosis:"🚰 Мій осмос",filters:"💧 Фільтри",tasks:"📋 Справи",shopping:"🛒 Покупки",expenses:"💸 Витрати",medicines:"🧰 Аптечка",stats:"📊 Статистика",family:"👨‍👩‍👧 Сім’я"};
 const prompts={osmosis:["Як називається твоя система зворотного осмосу?","Марка та модель осмосу (або - якщо невідомо)?"],filters:["Назва фільтра?","Дата останньої заміни: ДД.ММ.РРРР або сьогодні?","Інтервал: 90 днів, 6 місяців або кінцева дата 31.12.2027?"],tasks:["Назва справи?","Коли виконати: ДД.ММ.РРРР або сьогодні?","Повторювати через скільки днів? (0 — не повторювати)"],shopping:["Що потрібно купити?","Кількість або примітка?"],expenses:["За що витрати?","Сума в гривнях?"]};
 const medicinePrompts=[
@@ -981,6 +983,16 @@ async function reminders(e,dt){
 }
 export default {
  async fetch(request,e){const path=new URL(request.url).pathname;
+  if(request.method==="GET"&&(path==="/app"||path==="/app/")){
+   return new Response(miniAppHtml(),{headers:{
+    "Content-Type":"text/html; charset=utf-8",
+    "Cache-Control":"no-store",
+    "X-Content-Type-Options":"nosniff",
+    "Referrer-Policy":"no-referrer",
+    "Content-Security-Policy":"default-src 'self'; script-src 'self' 'unsafe-inline' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'"
+   }});
+  }
+  if(path.startsWith("/api/"))return handleMiniAppApi(request,e);
   if(request.method==="GET"&&path==="/health")return new Response("OK");
   if(request.method!=="POST"||path!=="/telegram")return new Response("Not Found",{status:404});
   if(!e.BOT_TOKEN||!e.WEBHOOK_SECRET||!e.DB)return new Response("Not configured",{status:503});

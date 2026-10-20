@@ -57,7 +57,15 @@ try{
   }
   await check("home");
   async function trigger(act){
-   const clicked=await page.evaluate(act=>{const el=document.querySelector('[data-act="'+act+'"]');if(!el)return false;el.click();return true},act);
+   const clicked=await page.evaluate(act=>{
+    let el=document.querySelector('[data-act="'+act+'"]');
+    if(!el&&act.startsWith("page:")&&act!=="page:more"){
+     document.querySelector('[data-act="page:more"]')?.click();
+     el=document.querySelector('[data-act="'+act+'"]');
+    }
+    if(!el)return false;
+    el.click();return true;
+   },act);
    assert.ok(clicked,width+"px action "+act+" missing");
    await page.waitForTimeout(40);
   }
@@ -70,10 +78,16 @@ try{
   ]){
    await trigger(action);await check(name);
   }
-  for(const action of ["new:system","new:filter","new:medicine","new:task","new:shopping","new:expense"]){
+  for(const [pageName,action] of [
+   ["osmosis","new:system"],["osmosis","new:filter"],
+   ["medicines","new:medicine"],["tasks","new:task"],
+   ["shopping","new:shopping"],["expenses","new:expense"]
+  ]){
+   await trigger("page:"+pageName);
    await trigger(action);await check(action);
    await trigger("close");
   }
+  await trigger("page:osmosis");
   await trigger("open:filter:1");await check("filter card");await trigger("close");
   await trigger("page:medicines");await trigger("open:medicine:1");await check("medicine card");await trigger("close");
   assert.deepEqual(errors,[],width+"px runtime JavaScript errors: "+errors.join("; "));

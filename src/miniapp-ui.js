@@ -4,7 +4,7 @@ return String.raw`<!doctype html>
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f7f9ff">
 <meta name="color-scheme" content="light">
 <title>Оселя — турбота про дім</title>
@@ -96,8 +96,8 @@ html,body{width:100%;max-width:100%;min-width:0;overflow-x:clip}
 .summary-strip>div{min-width:0;padding:12px 7px}
 .summary-strip strong{font-size:clamp(17px,5vw,20px);overflow-wrap:anywhere}
 .summary-strip span{line-height:1.3;display:block;overflow-wrap:anywhere}
-.tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:4px;padding:4px}
-.tabs button{min-width:0;padding:10px 5px;line-height:1.2;overflow-wrap:anywhere;white-space:normal}
+.tabs{display:flex;flex-wrap:nowrap;gap:4px;padding:4px}
+.tabs button{flex:1 1 0;width:0;min-width:0;padding:10px 5px;line-height:1.2;overflow-wrap:anywhere;white-space:normal}
 .bottom-nav{width:100%;max-width:540px;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;padding:8px max(4px,env(safe-area-inset-right)) calc(11px + env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left));}
 .nav-btn{min-width:0;width:100%;max-width:100%;font-size:clamp(9px,2.5vw,10px);line-height:1.25;overflow-wrap:anywhere;padding:5px 1px 7px}
 .nav-btn span{width:clamp(29px,9vw,39px);height:34px;max-width:100%}
@@ -114,7 +114,7 @@ html,body{width:100%;max-width:100%;min-width:0;overflow-x:clip}
 .field label{line-height:1.35;overflow-wrap:anywhere}
 .field input,.field select,.field textarea{display:block;min-width:0;width:100%;max-width:100%;min-height:46px;border-radius:14px;line-height:1.35;font-size:16px; /* prevent iOS zoom */ }
 .field input[type=date],.field input[type=number],.field input[type=text],.field input[readonly]{max-width:100%;min-width:0;min-height:46px;appearance:auto;-webkit-appearance:none}
-.field input[type=date]{-webkit-appearance:date-picker}
+.field input[type=date]{-webkit-appearance:initial;appearance:auto}
 .field textarea{min-height:85px}
 .field>.card{max-width:100%}
 .sheet-footer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:10px}

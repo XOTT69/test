@@ -342,7 +342,7 @@ async function menu(e,u,kind="home"){
   const shopping=await first(e,"SELECT COUNT(*) n FROM items WHERE uid=? AND kind='shopping' AND done=0",u);
  const medicineDue=await first(e,"SELECT COUNT(*) n FROM medicine_items WHERE uid=? AND archived=0 AND expires_at<=?",u,add(today(),30));
  const medicineLow=await first(e,"SELECT COUNT(*) n FROM medicine_items WHERE uid=? AND archived=0 AND (quantity=0 OR (low_at>0 AND quantity<=low_at))",u);
-  return send(e,u,"<b>🏠 Оселя</b>\n\n🔴 Фільтрів замінити зараз: "+overdue.n+"\n🟠 Фільтрів замінити протягом 7 днів: "+soon.n+"\n📋 Справ на 7 днів: "+tasks.n+"\n🛒 Покупок: "+shopping.n+"\n🧰 Ліків з терміном ≤30 днів: "+medicineDue.n+"\n📉 Малий запас ліків: "+medicineLow.n+"\n\nОберіть розділ:",kb);
+  return send(e,u,"<b>🏠 Оселя</b>\n\n🔴 Фільтрів замінити зараз: "+overdue.n+"\n🟠 Фільтрів замінити протягом 7 днів: "+soon.n+"\n📋 Справ на 7 днів: "+tasks.n+"\n🛒 Покупок: "+shopping.n+"\n🧰 Ліків з терміном ≤30 днів: "+medicineDue.n+"\n📉 Малий запас ліків: "+medicineLow.n+"\n\nОберіть розділ:",e.MINIAPP_URL?[[{text:"✨ Відкрити «Оселю»",web_app:{url:e.MINIAPP_URL}}],...kb]:kb);
  }
  if(kind==="medicines")return medicineMenu(e,u);
  if(kind==="agenda")return agenda(e,u);

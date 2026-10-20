@@ -10,4 +10,5 @@ database_id = "16c0e74c-7a79-4ffc-b8d7-e40018564f44"
 migrations_dir = "migrations"
 [vars]
 TIMEZONE = "Europe/Kyiv"
+MINIAPP_URL = "https://oselya-telegram-bot.mikolenkoanton7.workers.dev/app"
 # ALLOWED_USERS = "123456789"

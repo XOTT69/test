@@ -145,6 +145,19 @@ jobs:
           const result = await response.json();
           if (!response.ok || !result.ok) throw new Error("Webhook failed: " + (result.description || response.status));
           console.log("Oselya bot webhook active:", workerURL.href);
+          const button = new URLSearchParams({
+            menu_button: JSON.stringify({
+              type: "web_app",
+              text: "🏠 Оселя",
+              web_app: { url: new URL("/app", workerURL).href }
+            })
+          });
+          const menuResponse = await fetch("https://api.telegram.org/bot" + process.env.BOT_TOKEN + "/setChatMenuButton", {
+            method: "POST", body: button
+          });
+          const menuResult = await menuResponse.json();
+          if (!menuResponse.ok || !menuResult.ok) throw new Error("Telegram Mini App menu button registration failed: " + (menuResult.description || menuResponse.status));
+          console.log("Telegram Mini App menu button registered:", new URL("/app", workerURL).href);
           JS
 
       - name: Summarize
